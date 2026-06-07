@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { cockpit, sendMessage } from "$lib/cockpit.svelte";
-	import { STATUS_META, PERMISSION_META, ROLE_EMOJIS, type PermissionMode } from "$lib/types";
+	import { cockpit, sendMessage, stopAgent } from "$lib/cockpit.svelte";
+	import { STATUS_META, ROLE_EMOJIS } from "$lib/types";
 	import { renderMarkdown } from "$lib/markdown";
 	import Terminal from "$lib/components/Terminal.svelte";
 
@@ -108,17 +108,16 @@
 			</div>
 		</div>
 		<span class="sp"></span>
-		<select
-			class="perm"
-			class:danger={(assistant.permission ?? "default") === "bypassPermissions"}
-			value={assistant.permission ?? "default"}
-			onchange={(e) => { assistant.permission = e.currentTarget.value as PermissionMode; assistant.attention = undefined; }}
-			title={PERMISSION_META[assistant.permission ?? "default"].hint}
+		<button
+			class="autobtn"
+			class:on={assistant.autonomous}
+			onclick={() => { assistant.autonomous = !assistant.autonomous; assistant.attention = undefined; stopAgent(sessionKey); }}
+			title={assistant.autonomous
+				? "Full autonomy: edits files and runs commands without asking (--dangerously-skip-permissions). Click to turn off."
+				: "Default Claude permissions. Click to allow full autonomy."}
 		>
-			{#each Object.entries(PERMISSION_META) as [mode, meta]}
-				<option value={mode}>{meta.label}</option>
-			{/each}
-		</select>
+			{assistant.autonomous ? "⚡ Autonomous" : "🔒 Default"}
+		</button>
 		<button class="act" title="Search">⌕</button>
 		<button class="termbtn" class:on={advanced} onclick={() => (advanced = !advanced)} title="Toggle the raw terminal">
 			⌘ Terminal
@@ -170,9 +169,6 @@
 				placeholder="Message your {assistant.name} assistant…"
 			></textarea>
 			<button class="snd" onclick={submit} aria-label="Send">➤</button>
-			<button class="adv" onclick={() => (advanced = true)} title="Open the raw terminal for this session">
-				⌘ Advanced ▸
-			</button>
 		</footer>
 	{/if}
 	{:else}
@@ -236,12 +232,13 @@
 		border: 1px solid var(--ai-border); background: transparent; border-radius: 9px; padding: 6px 11px;
 	}
 	.termbtn.on { background: var(--accent); color: #fff; border-color: var(--accent); }
-	.perm {
-		font-family: inherit; font-size: 12px; font-weight: 700; color: var(--ink);
+	.autobtn {
+		font-family: inherit; font-size: 12px; font-weight: 700; color: var(--muted);
 		background: var(--input-bg); border: 1px solid var(--ai-border); border-radius: 9px;
-		padding: 6px 9px; cursor: pointer; outline: none;
+		padding: 6px 11px; cursor: pointer;
 	}
-	.perm.danger { color: #b3500a; background: #fff1e6; border-color: #ffd2ad; }
+	.autobtn:hover { color: var(--ink); }
+	.autobtn.on { color: #b3500a; background: #fff1e6; border-color: #ffd2ad; }
 
 	.empty {
 		flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -260,7 +257,7 @@
 	}
 	.msg {
 		max-width: 74%; padding: 11px 14px; border-radius: 15px;
-		font-size: 13.5px; line-height: 1.55; font-weight: 500;
+		font-size: var(--msg-size); line-height: 1.55; font-weight: 500;
 	}
 	.msg.me { align-self: flex-end; background: var(--me); color: #fff; border-bottom-right-radius: 5px; }
 	.msg.ai {
@@ -270,7 +267,7 @@
 	.who { font-size: 11px; font-weight: 700; color: var(--accent); margin-bottom: 4px; opacity: .85; }
 
 	/* ---- rendered markdown inside assistant bubbles ---- */
-	.md { font-size: 13.5px; line-height: 1.6; }
+	.md { font-size: var(--msg-size); line-height: 1.6; }
 	.md :global(> :first-child) { margin-top: 0; }
 	.md :global(> :last-child) { margin-bottom: 0; }
 	.md :global(p) { margin: 0 0 8px; }
@@ -343,7 +340,7 @@
 	}
 	.box {
 		flex: 1; background: var(--input-bg); border-radius: 13px; padding: 11px 15px;
-		color: var(--ink); font-size: 13.5px; font-weight: 500;
+		color: var(--ink); font-size: var(--msg-size); font-weight: 500;
 		border: none; outline: none; font-family: inherit;
 		resize: none; line-height: 1.45; max-height: 160px; overflow-y: auto;
 	}
@@ -352,10 +349,6 @@
 		width: 42px; height: 42px; border-radius: 13px; border: none;
 		background: var(--me); color: #fff; font-size: 15px; cursor: pointer;
 		display: flex; align-items: center; justify-content: center;
-	}
-	.adv {
-		font-size: 11.5px; color: var(--accent); font-weight: 700; cursor: pointer;
-		border: none; background: transparent; white-space: nowrap;
 	}
 
 	/* ---- advanced: live terminal ---- */

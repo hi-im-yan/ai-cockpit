@@ -31,7 +31,7 @@
 	}
 </script>
 
-<nav class="topnav" data-tauri-drag-region>
+<nav class="topnav">
 	<span class="brand" data-tauri-drag-region></span>
 
 	{#each cockpit.projects as project, i (project.id)}
@@ -66,7 +66,7 @@
 	<button class="ptab add" onclick={openNew}>+ Project</button>
 	<span class="sp" data-tauri-drag-region></span>
 	<button class="ic" title="Search">⌕</button>
-	<button class="ic" title="Settings — theme, font, size">⚙</button>
+	<button class="ic" title="Settings — theme, font, size" onclick={() => (cockpit.settingsOpen = true)}>⚙</button>
 	<span class="windiv"></span>
 	<button class="winbtn" onclick={() => winAction("minimize")} title="Minimize" aria-label="Minimize">─</button>
 	<button class="winbtn" onclick={() => winAction("toggleMaximize")} title="Maximize" aria-label="Maximize">▢</button>

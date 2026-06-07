@@ -14,6 +14,8 @@ export const cockpit = $state({
 	projectIndex: 0,
 	assistantIndex: 0,
 	pickerOpen: false, // the in-app folder picker (for adding an assistant)
+	settingsOpen: false, // the appearance settings panel
+	settings: { theme: "lavender", font: "jakarta", fontSize: "md" },
 });
 
 /** Switch the active project (top navbar tab) and reset to its first assistant. */
@@ -58,10 +60,19 @@ export function createProject(name: string): void {
 	cockpit.assistantIndex = 0;
 }
 
-/** Best-effort: kills a session's tmux + PTY in the backend. */
+/** Best-effort: stops a session's Claude process + tmux/PTY in the backend. */
 function killSession(key: string): void {
 	if (!isTauri) return;
-	void import("@tauri-apps/api/core").then(({ invoke }) => invoke("pty_kill", { key }).catch(() => {}));
+	void import("@tauri-apps/api/core").then(({ invoke }) => {
+		invoke("pty_kill", { key }).catch(() => {});
+		invoke("agent_stop", { key }).catch(() => {});
+	});
+}
+
+/** Stops an assistant's Claude process so the next message respawns it (e.g. after toggling autonomy). */
+export function stopAgent(key: string): void {
+	if (!isTauri || !key) return;
+	void import("@tauri-apps/api/core").then(({ invoke }) => invoke("agent_stop", { key }).catch(() => {}));
 }
 
 /** Closes a project: ends all its assistants' sessions and removes the tab. */
@@ -150,7 +161,6 @@ function newAssistant(name: string, cwd: string, index: number) {
 		preview: `📂 ${cwd}`,
 		cwd,
 		messages: [],
-		permission: "default" as const,
 	};
 }
 
@@ -235,7 +245,7 @@ export async function sendMessage(project: Project, assistant: Assistant, text: 
 			key,
 			cwd: assistant.cwd,
 			message: trimmed,
-			permission: assistant.permission ?? "default",
+			skipPermissions: assistant.autonomous ?? false,
 			resume: assistant.sessionId,
 		});
 	} catch (e) {
@@ -303,6 +313,17 @@ export async function initAgent(): Promise<void> {
 			assistant.status = "idle";
 			assistant.activity = undefined;
 			if (!isViewing(key) && assistant.attention !== "permission") assistant.attention = "reply";
+		} else if (kind === "exit") {
+			// The Claude process ended. If it died mid-turn, note it; the next message respawns it.
+			if (assistant.status === "working") {
+				assistant.messages.push({ from: "assistant", text: "⚠️ The session ended. Send another message to restart it." });
+			}
+			streamMsgIdx.delete(key);
+			streamTarget.delete(key);
+			streamShown.delete(key);
+			streamDone.delete(key);
+			assistant.status = "idle";
+			assistant.activity = undefined;
 		}
 		// kind === "tool" is ignored for now (could surface "using Edit…" later).
 	});
@@ -327,6 +348,9 @@ export async function initStore(): Promise<void> {
 		cockpit.assistantIndex = 0;
 	}
 
+	const savedSettings = await store.get<typeof cockpit.settings>("settings");
+	if (savedSettings) Object.assign(cockpit.settings, savedSettings);
+
 	// One-time cleanup: drop the original demo projects (Grita Bingo / Blogfolio / VPS Infra),
 	// keeping anything you created. Runs once, then never touches your projects again.
 	if (!(await store.get<boolean>("seedCleared"))) {
@@ -345,14 +369,31 @@ export async function initStore(): Promise<void> {
 		}
 	}
 
-	// Deep-read projects so this effect re-runs on any change, then save (debounced).
+	// Deep-read projects + settings so this effect re-runs on any change, then save (debounced).
 	$effect.root(() => {
 		$effect(() => {
-			const snapshot = $state.snapshot(cockpit.projects);
+			const projectsSnap = $state.snapshot(cockpit.projects);
+			const settingsSnap = $state.snapshot(cockpit.settings);
 			clearTimeout(saveTimer);
 			saveTimer = setTimeout(() => {
-				void store?.set("projects", snapshot).then(() => store?.save());
+				void store
+					?.set("projects", projectsSnap)
+					.then(() => store?.set("settings", settingsSnap))
+					.then(() => store?.save());
 			}, 600);
+		});
+	});
+}
+
+/** Applies the appearance settings to <html> (data-theme / data-font / data-size). */
+export function initSettings(): void {
+	if (typeof document === "undefined") return;
+	$effect.root(() => {
+		$effect(() => {
+			const el = document.documentElement;
+			el.dataset.theme = cockpit.settings.theme;
+			el.dataset.font = cockpit.settings.font;
+			el.dataset.size = cockpit.settings.fontSize;
 		});
 	});
 }

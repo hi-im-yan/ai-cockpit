@@ -31,8 +31,8 @@ export interface Assistant {
 	cwd?: string;
 	/** Command launched inside the session's tmux (e.g. "claude"); shell if omitted. */
 	command?: string;
-	/** What this assistant is allowed to do (defaults to safe "default"). */
-	permission?: PermissionMode;
+	/** When true, runs Claude with --dangerously-skip-permissions (full autonomy). Default off. */
+	autonomous?: boolean;
 	/** Claude Code session id for this assistant, kept so `--resume` continues context. */
 	sessionId?: string;
 	/** Transient: what the assistant is doing right now (e.g. "editing files"). Reset each turn. */
@@ -66,16 +66,6 @@ export interface Project {
 	unread?: number;
 	assistants: Assistant[];
 }
-
-/** What an assistant is allowed to do, mapped to Claude Code's `--permission-mode`. */
-export type PermissionMode = "default" | "acceptEdits" | "bypassPermissions";
-
-/** Labels + hints for the permission selector. `default` = safe/talk-only. */
-export const PERMISSION_META: Record<PermissionMode, { label: string; hint: string; danger?: boolean }> = {
-	default: { label: "🔒 Chat only", hint: "Talks and plans, but won't change your files" },
-	acceptEdits: { label: "✏️ Auto-edit", hint: "Can edit files in the project automatically" },
-	bypassPermissions: { label: "⚡ Full autonomy", hint: "Edits files AND runs commands with no approval", danger: true },
-};
 
 /** Display metadata for each status: the label and colour used by pills/dots. */
 export const STATUS_META: Record<Status, { label: string; color: string }> = {

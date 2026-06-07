@@ -2,6 +2,7 @@ mod agent;
 mod files;
 mod pty;
 
+use agent::AgentState;
 use pty::PtyState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -11,8 +12,10 @@ pub fn run() {
 		.plugin(tauri_plugin_dialog::init())
 		.plugin(tauri_plugin_store::Builder::new().build())
 		.manage(PtyState::default())
+		.manage(AgentState::default())
 		.invoke_handler(tauri::generate_handler![
 			agent::agent_send,
+			agent::agent_stop,
 			files::home_dir,
 			files::list_dirs,
 			pty::pty_open,

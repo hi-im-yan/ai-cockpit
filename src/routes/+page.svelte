@@ -4,10 +4,12 @@
 	import Sidebar from "$lib/components/Sidebar.svelte";
 	import Chat from "$lib/components/Chat.svelte";
 	import FolderPicker from "$lib/components/FolderPicker.svelte";
-	import { initAgent, initStore } from "$lib/cockpit.svelte";
+	import Settings from "$lib/components/Settings.svelte";
+	import { initAgent, initStore, initSettings } from "$lib/cockpit.svelte";
 
-	// Load saved projects, then start the listener that routes streamed Claude replies.
+	// Apply appearance, load saved projects, then start the Claude event listener.
 	onMount(() => {
+		initSettings();
 		initStore();
 		initAgent();
 	});
@@ -24,15 +26,4 @@
 	<Chat />
 </div>
 <FolderPicker />
-
-<style>
-	.app {
-		display: grid;
-		height: 100vh;
-		grid-template-rows: 56px 1fr;
-		grid-template-columns: 250px 1fr;
-		grid-template-areas:
-			"top top"
-			"side chat";
-	}
-</style>
+<Settings />
