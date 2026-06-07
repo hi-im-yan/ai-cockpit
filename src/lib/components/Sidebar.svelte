@@ -96,16 +96,18 @@
 		min-width: 18px; height: 18px; border-radius: 9px; padding: 0 4px; flex: 0 0 auto;
 		display: flex; align-items: center; justify-content: center;
 	}
-	/* Whole-row blink in the attention colour. */
-	.si.flag-reply { animation: rowblink-reply 1.2s ease-in-out infinite; }
-	.si.flag-perm { animation: rowblink-perm .8s ease-in-out infinite; }
+	/* Whole-row blink in the attention colour (theme-aware via --attn-*). Keeps a visible
+	   base tint + left accent bar at the trough so the row never washes out, and pulses to a
+	   strong peak. Overrides hover/selected background while the assistant needs you. */
+	.si.flag-reply { animation: rowblink-reply 1.3s ease-in-out infinite; }
+	.si.flag-perm  { animation: rowblink-perm  .85s ease-in-out infinite; }
 	@keyframes rowblink-reply {
-		0%, 100% { background: transparent; }
-		50% { background: rgba(124, 92, 255, .30); }
+		0%, 100% { background: rgba(var(--attn-reply), .15); box-shadow: inset 3px 0 0 rgba(var(--attn-reply), .55); }
+		50%      { background: rgba(var(--attn-reply), .42); box-shadow: inset 3px 0 0 rgba(var(--attn-reply), 1); }
 	}
 	@keyframes rowblink-perm {
-		0%, 100% { background: transparent; }
-		50% { background: rgba(255, 59, 59, .30); }
+		0%, 100% { background: rgba(var(--attn-perm), .18); box-shadow: inset 3px 0 0 rgba(var(--attn-perm), .6); }
+		50%      { background: rgba(var(--attn-perm), .48); box-shadow: inset 3px 0 0 rgba(var(--attn-perm), 1); }
 	}
 	.si-x {
 		position: absolute; right: 8px; top: 50%; transform: translateY(-50%);

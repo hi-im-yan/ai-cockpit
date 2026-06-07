@@ -109,11 +109,12 @@
 	.ptab {
 		display: flex; align-items: center; gap: 8px;
 		padding: 8px 26px 8px 14px; border-radius: 10px; border: none; background: transparent;
-		color: #b3acc9; font-weight: 700; font-size: 13px; cursor: pointer; transition: .15s;
+		color: #d9d3ec; font-weight: 700; font-size: 13px; cursor: pointer; transition: .15s;
 	}
-	.ptab:hover { background: rgba(255,255,255,.06); color: #fff; }
-	.ptab.on { background: rgba(255,255,255,.1); color: #fff; }
-	.ptab.add { color: #7b7596; font-weight: 600; padding: 8px 14px; }
+	.ptab:hover { background: rgba(255,255,255,.12); color: #fff; }
+	.ptab.on { background: rgba(255,255,255,.16); color: #fff; }
+	.ptab.add { color: #b7b0d4; font-weight: 600; padding: 8px 14px; }
+	.ptab.add:hover { color: #fff; }
 	.tab-x {
 		position: absolute; right: 5px; top: 50%; transform: translateY(-50%);
 		border: none; background: transparent; color: #8b84a6; font-size: 15px; line-height: 1;

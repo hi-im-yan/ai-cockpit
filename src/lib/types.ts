@@ -67,10 +67,14 @@ export interface Project {
 	assistants: Assistant[];
 }
 
-/** Display metadata for each status: the label and colour used by pills/dots. */
+/**
+ * Display metadata for each status: the label and the colour used by pills/dots.
+ * Colours are theme-aware CSS variables (defined in app.css, overridden per data-theme)
+ * so each skin can tune the status/notification contrast for its own background.
+ */
 export const STATUS_META: Record<Status, { label: string; color: string }> = {
-	online: { label: "online", color: "#27c281" },
-	working: { label: "working…", color: "#e09a16" },
-	waiting: { label: "waiting for you", color: "#7c5cff" },
-	idle: { label: "idle", color: "#9aa0aa" },
+	online: { label: "online", color: "var(--st-online)" },
+	working: { label: "working…", color: "var(--st-working)" },
+	waiting: { label: "waiting for you", color: "var(--st-waiting)" },
+	idle: { label: "idle", color: "var(--st-idle)" },
 };
