@@ -15,6 +15,25 @@
 		else await w.close();
 	}
 
+	/**
+	 * Move the window by grabbing the top bar. Driven in JS (startDragging) rather than
+	 * relying on data-tauri-drag-region, which is unreliable on Linux/WebKitGTK. Interactive
+	 * controls (tabs, icons, window buttons, the rename input) keep their clicks — we only
+	 * start a drag when the press lands on empty chrome.
+	 */
+	async function startDrag(e: PointerEvent) {
+		if (!isTauri || e.button !== 0) return;
+		if ((e.target as HTMLElement).closest("button, input")) return;
+		const { getCurrentWindow } = await import("@tauri-apps/api/window");
+		await getCurrentWindow().startDragging();
+	}
+
+	/** Double-click empty chrome to maximise/restore, like a native titlebar. */
+	function onBarDblClick(e: MouseEvent) {
+		if ((e.target as HTMLElement).closest("button, input")) return;
+		winAction("toggleMaximize");
+	}
+
 	function focusNode(node: HTMLInputElement) {
 		node.focus();
 		node.select();
@@ -31,7 +50,7 @@
 	}
 </script>
 
-<nav class="topnav">
+<nav class="topnav" onpointerdown={startDrag} ondblclick={onBarDblClick} data-tauri-drag-region>
 	<span class="brand" data-tauri-drag-region></span>
 
 	{#each cockpit.projects as project, i (project.id)}
