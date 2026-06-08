@@ -41,6 +41,9 @@ export interface Assistant {
 	attention?: "reply" | "permission";
 	/** A multiple-choice question from Claude awaiting an answer — renders an inline picker. */
 	pendingQuestion?: PendingQuestion;
+	/** Transient: true while a backend Claude session is running (ongoing). Drives the "Online"
+	 * sidebar grouping. Set on first message, cleared when the process exits/closes. Reset on launch. */
+	live?: boolean;
 }
 
 /** One selectable choice in an {@link AskQuestion}. */

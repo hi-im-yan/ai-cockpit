@@ -1,8 +1,21 @@
 <script lang="ts">
 	import { cockpit, selectAssistant, addAssistant, requestCloseAssistant } from "$lib/cockpit.svelte";
 	import { STATUS_META } from "$lib/types";
+	import type { Assistant, Status } from "$lib/types";
 
 	const project = $derived(cockpit.projects[cockpit.projectIndex]);
+
+	// Keep each assistant paired with its original index (selection/close are index-based),
+	// then split by whether a backend session is live so the sidebar separates Online vs Idle.
+	const items = $derived((project?.assistants ?? []).map((a, i) => ({ a, i })));
+	const online = $derived(items.filter((x) => x.a.live));
+	const idle = $derived(items.filter((x) => !x.a.live));
+
+	/** Status to show in the row: a live-but-quiet session reads as "online" (green), not "idle". */
+	function effStatus(a: Assistant): Status {
+		if (a.status === "working" || a.status === "waiting") return a.status;
+		return a.live ? "online" : "idle";
+	}
 </script>
 
 <aside class="side">
@@ -13,29 +26,20 @@
 		</div>
 
 		<div class="list">
-			<div class="grp">Assistants</div>
 			{#if project.assistants.length === 0}
+				<div class="grp">Assistants</div>
 				<div class="emptylist">No assistants yet — add one below ↓</div>
+			{:else if online.length > 0}
+				<div class="grp"><span class="lvdot"></span>Online · {online.length}</div>
+				{#each online as x (x.a.id)}{@render row(x.a, x.i)}{/each}
+				{#if idle.length > 0}
+					<div class="grp dim">Idle · {idle.length}</div>
+					{#each idle as x (x.a.id)}{@render row(x.a, x.i)}{/each}
+				{/if}
+			{:else}
+				<div class="grp">Assistants</div>
+				{#each idle as x (x.a.id)}{@render row(x.a, x.i)}{/each}
 			{/if}
-			{#each project.assistants as a, i (a.id)}
-				<div class="si-wrap">
-					<button
-						class="si"
-						class:on={i === cockpit.assistantIndex}
-						class:flag-reply={a.attention === "reply"}
-						class:flag-perm={a.attention === "permission"}
-						onclick={() => selectAssistant(i)}
-					>
-						<span class="av" style="background:{a.bg}">{a.emoji}</span>
-						<span class="tx">
-							<span class="name"><span class="dt" class:pulse={a.status === "working"} style="background:{STATUS_META[a.status].color}"></span>{a.name}</span>
-							<span class="preview">{a.status === "working" ? (a.activity ?? "working…") : a.preview}</span>
-						</span>
-						{#if a.unread}<span class="un">{a.unread}</span>{/if}
-					</button>
-					<button class="si-x" title="Close assistant" onclick={() => requestCloseAssistant(cockpit.projectIndex, i)}>×</button>
-				</div>
-			{/each}
 		</div>
 
 		<button class="newt" onclick={addAssistant}>+ New assistant</button>
@@ -43,6 +47,26 @@
 		<div class="emptylist" style="padding: 18px;">No project selected.</div>
 	{/if}
 </aside>
+
+{#snippet row(a: Assistant, i: number)}
+	<div class="si-wrap">
+		<button
+			class="si"
+			class:on={i === cockpit.assistantIndex}
+			class:flag-reply={a.attention === "reply"}
+			class:flag-perm={a.attention === "permission"}
+			onclick={() => selectAssistant(i)}
+		>
+			<span class="av" style="background:{a.bg}">{a.emoji}</span>
+			<span class="tx">
+				<span class="name"><span class="dt" class:pulse={a.status === "working"} style="background:{STATUS_META[effStatus(a)].color}"></span>{a.name}</span>
+				<span class="preview">{a.status === "working" ? (a.activity ?? "working…") : a.preview}</span>
+			</span>
+			{#if a.unread}<span class="un">{a.unread}</span>{/if}
+		</button>
+		<button class="si-x" title="Close assistant" onclick={() => requestCloseAssistant(cockpit.projectIndex, i)}>×</button>
+	</div>
+{/snippet}
 
 <style>
 	.side {
@@ -66,6 +90,12 @@
 	.grp {
 		font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
 		color: var(--muted); margin: 8px 8px 6px; opacity: .85;
+		display: flex; align-items: center; gap: 6px;
+	}
+	.grp.dim { opacity: .6; margin-top: 14px; }
+	.grp .lvdot {
+		width: 7px; height: 7px; border-radius: 50%; background: var(--st-online);
+		box-shadow: 0 0 0 3px color-mix(in srgb, var(--st-online) 22%, transparent);
 	}
 	.si-wrap { position: relative; }
 	.si {

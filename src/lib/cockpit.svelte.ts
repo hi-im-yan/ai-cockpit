@@ -239,6 +239,7 @@ export async function sendMessage(project: Project, assistant: Assistant, text: 
 	}
 
 	const key = keyOf(project, assistant);
+	assistant.live = true; // a backend session is now running (stays up across turns)
 	try {
 		const { invoke } = await import("@tauri-apps/api/core");
 		await invoke("agent_send", {
@@ -362,6 +363,7 @@ export async function initAgent(): Promise<void> {
 			streamDone.delete(key);
 			assistant.status = "idle";
 			assistant.activity = undefined;
+			assistant.live = false; // session is no longer running → drops out of "Online"
 		}
 		// kind === "tool" is ignored for now (could surface "using Edit…" later).
 	});
@@ -398,12 +400,13 @@ export async function initStore(): Promise<void> {
 		await store.set("seedCleared", true);
 	}
 
-	// No turn is running right after launch, so clear any stale "working" status/activity.
+	// No turn or session is running right after launch, so clear stale runtime state.
 	for (const p of cockpit.projects) {
 		for (const a of p.assistants) {
 			if (a.status === "working") a.status = "idle";
 			a.activity = undefined;
 			a.attention = undefined;
+			a.live = false;
 		}
 	}
 
