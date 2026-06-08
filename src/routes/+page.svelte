@@ -5,6 +5,7 @@
 	import Chat from "$lib/components/Chat.svelte";
 	import FolderPicker from "$lib/components/FolderPicker.svelte";
 	import Settings from "$lib/components/Settings.svelte";
+	import ResizeGrips from "$lib/components/ResizeGrips.svelte";
 	import { initAgent, initStore, initSettings } from "$lib/cockpit.svelte";
 
 	// Apply appearance, load saved projects, then start the Claude event listener.
@@ -27,3 +28,4 @@
 </div>
 <FolderPicker />
 <Settings />
+<ResizeGrips />
