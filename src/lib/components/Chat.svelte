@@ -1,8 +1,9 @@
 <script lang="ts">
-	import { cockpit, sendMessage, stopAgent } from "$lib/cockpit.svelte";
+	import { cockpit, sendMessage, stopAgent, answerQuestion } from "$lib/cockpit.svelte";
 	import { STATUS_META, ROLE_EMOJIS } from "$lib/types";
 	import { renderMarkdown } from "$lib/markdown";
 	import Terminal from "$lib/components/Terminal.svelte";
+	import QuestionPicker from "$lib/components/QuestionPicker.svelte";
 
 	const project = $derived(cockpit.projects[cockpit.projectIndex]);
 	const assistant = $derived(project ? project.assistants[cockpit.assistantIndex] : undefined);
@@ -150,7 +151,14 @@
 					</div>
 				{/if}
 			{/each}
-			{#if assistant.status === "working"}
+			{#if assistant.pendingQuestion}
+				{#key assistant.pendingQuestion.requestId}
+					<QuestionPicker
+						pending={assistant.pendingQuestion}
+						onsubmit={(sel) => answerQuestion(assistant, sel)}
+					/>
+				{/key}
+			{:else if assistant.status === "working"}
 				<div class="typing">
 					<span class="dots"><i></i><i></i><i></i></span>
 					<span class="act">{assistant.activity ?? "working…"}</span>

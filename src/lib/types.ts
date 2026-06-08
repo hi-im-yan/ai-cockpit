@@ -39,6 +39,31 @@ export interface Assistant {
 	activity?: string;
 	/** Whether it needs the user: "reply" (unseen answer) or "permission" (blocked). Drives the blink. */
 	attention?: "reply" | "permission";
+	/** A multiple-choice question from Claude awaiting an answer — renders an inline picker. */
+	pendingQuestion?: PendingQuestion;
+}
+
+/** One selectable choice in an {@link AskQuestion}. */
+export interface QuestionOption {
+	label: string;
+	description: string;
+}
+
+/** A single multiple-choice question Claude asks via the `ask_user` MCP tool. */
+export interface AskQuestion {
+	question: string;
+	/** Short label for the question (a few words). */
+	header: string;
+	/** When true the user may pick several options; otherwise exactly one. */
+	multiSelect: boolean;
+	options: QuestionOption[];
+}
+
+/** A pending `ask_user` prompt awaiting the user's selection (renders as a picker). */
+export interface PendingQuestion {
+	/** Correlates the answer back to the blocked tool call in the Rust MCP server. */
+	requestId: string;
+	questions: AskQuestion[];
 }
 
 /** Emoji choices offered when picking an assistant's role icon. */

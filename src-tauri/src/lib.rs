@@ -1,8 +1,10 @@
 mod agent;
 mod files;
+mod mcp;
 mod pty;
 
 use agent::AgentState;
+use mcp::McpState;
 use pty::PtyState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -13,9 +15,11 @@ pub fn run() {
 		.plugin(tauri_plugin_store::Builder::new().build())
 		.manage(PtyState::default())
 		.manage(AgentState::default())
+		.manage(McpState::default())
 		.invoke_handler(tauri::generate_handler![
 			agent::agent_send,
 			agent::agent_stop,
+			mcp::agent_answer,
 			files::home_dir,
 			files::list_dirs,
 			pty::pty_open,

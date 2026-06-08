@@ -25,6 +25,11 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager, State};
 
+/// Steers the model toward our interactive picker tool over plain-text option lists.
+const ASK_USER_PROMPT: &str = "When you need the user to choose between options, ALWAYS call the \
+mcp__cockpit__ask_user tool instead of listing the options as text. It shows an interactive picker \
+and returns the user's selection so you can continue. Do not ask the user to type a number or option name.";
+
 /// A live Claude process and the pipe we feed messages into.
 struct Session {
 	child: Child,
@@ -130,6 +135,27 @@ fn spawn_session(
 		.arg("--output-format").arg("stream-json")
 		.arg("--verbose")
 		.arg("--include-partial-messages");
+
+	// Wire our in-process `ask_user` MCP tool so the assistant can pop an interactive picker
+	// instead of the built-in AskUserQuestion (which auto-denies in headless mode). We allow
+	// our tool (so it isn't blocked in default permission mode), disable the built-in, and
+	// nudge the model to prefer ours.
+	if let Ok(port) = crate::mcp::ensure_server(app, key) {
+		let mcp_config = format!(
+			r#"{{"mcpServers":{{"cockpit":{{"type":"http","url":"http://127.0.0.1:{port}/mcp"}}}}}}"#
+		);
+		cmd.arg("--mcp-config").arg(mcp_config)
+			.arg("--allowed-tools").arg("mcp__cockpit__ask_user")
+			.arg("--disallowed-tools").arg("AskUserQuestion")
+			.arg("--append-system-prompt").arg(ASK_USER_PROMPT);
+		// `ask_user` deliberately blocks until the human clicks an option, which easily exceeds
+		// Claude's default MCP tool-call timeout — when it fires, Claude marks the server
+		// "disconnected" and falls back to plain text. Give the tool plenty of headroom.
+		// (Dev path only: on Windows these env vars don't cross the wsl.exe boundary — see note.)
+		cmd.env("MCP_TOOL_TIMEOUT", "86400000") // 24h — effectively "wait for the user"
+			.env("MCP_TIMEOUT", "120000"); // 2m server startup
+	}
+
 	if let Some(sid) = resume {
 		cmd.arg("--resume").arg(sid);
 	}

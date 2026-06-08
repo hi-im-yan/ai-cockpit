@@ -1,6 +1,6 @@
 import { seedProjects } from "./data";
 import { toolVerb } from "./types";
-import type { Assistant, Project } from "./types";
+import type { Assistant, PendingQuestion, Project } from "./types";
 import type { Store } from "@tauri-apps/plugin-store";
 
 /**
@@ -254,10 +254,48 @@ export async function sendMessage(project: Project, assistant: Assistant, text: 
 	}
 }
 
-/** Registers the single listener that routes streamed Claude events into conversations. */
+/**
+ * Submits the user's picker selection back to the blocked `ask_user` MCP tool, which
+ * unblocks Claude's turn. `selections` is aligned to the question list — one array of
+ * chosen labels per question. Also records the choice as a chat bubble for history.
+ */
+export async function answerQuestion(assistant: Assistant, selections: string[][]): Promise<void> {
+	const pending = assistant.pendingQuestion;
+	if (!pending) return;
+	assistant.pendingQuestion = undefined;
+
+	const summary = pending.questions
+		.map((q, i) => `${q.header}: ${(selections[i] ?? []).join(", ") || "(no selection)"}`)
+		.join(" · ");
+	assistant.messages.push({ from: "me", text: summary });
+	assistant.preview = summary;
+	assistant.status = "working";
+	assistant.activity = "responding…";
+
+	if (!isTauri) return;
+	const { invoke } = await import("@tauri-apps/api/core");
+	await invoke("agent_answer", { requestId: pending.requestId, answers: selections }).catch((e) => {
+		assistant.messages.push({ from: "assistant", text: `⚠️ ${e}` });
+		assistant.status = "idle";
+		assistant.activity = undefined;
+	});
+}
+
+/** Registers the listeners that route streamed Claude events into conversations. */
 export async function initAgent(): Promise<void> {
 	if (!isTauri) return;
 	const { listen } = await import("@tauri-apps/api/event");
+
+	// Claude asked a multiple-choice question (via the ask_user MCP tool): show a picker.
+	await listen<PendingQuestion & { key: string }>("agent://question", (event) => {
+		const { key, requestId, questions } = event.payload;
+		const assistant = findByKey(key);
+		if (!assistant) return;
+		assistant.pendingQuestion = { requestId, questions };
+		assistant.status = "waiting";
+		assistant.activity = "waiting for your choice…";
+		if (!isViewing(key) && assistant.attention !== "permission") assistant.attention = "reply";
+	});
 
 	await listen<{ key: string; kind: string; text?: string }>("agent://event", (event) => {
 		const { key, kind, text } = event.payload;
