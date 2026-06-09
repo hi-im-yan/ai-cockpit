@@ -3,10 +3,11 @@
 	import TopNav from "$lib/components/TopNav.svelte";
 	import Sidebar from "$lib/components/Sidebar.svelte";
 	import Chat from "$lib/components/Chat.svelte";
+	import ChatGrid from "$lib/components/ChatGrid.svelte";
 	import FolderPicker from "$lib/components/FolderPicker.svelte";
 	import Settings from "$lib/components/Settings.svelte";
 	import ResizeGrips from "$lib/components/ResizeGrips.svelte";
-	import { initAgent, initStore, initSettings } from "$lib/cockpit.svelte";
+	import { cockpit, initAgent, initStore, initSettings } from "$lib/cockpit.svelte";
 
 	// Apply appearance, load saved projects, then start the Claude event listener.
 	onMount(() => {
@@ -24,7 +25,11 @@
 <div class="app">
 	<TopNav />
 	<Sidebar />
-	<Chat />
+	{#if cockpit.layout === "grid"}
+		<ChatGrid />
+	{:else}
+		<Chat />
+	{/if}
 </div>
 <FolderPicker />
 <Settings />

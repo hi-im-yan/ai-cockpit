@@ -1,12 +1,18 @@
 <script lang="ts">
 	import { cockpit, sendMessage, stopAgent, answerQuestion } from "$lib/cockpit.svelte";
 	import { STATUS_META, ROLE_EMOJIS } from "$lib/types";
+	import type { Assistant, Project } from "$lib/types";
 	import { renderMarkdown } from "$lib/markdown";
 	import Terminal from "$lib/components/Terminal.svelte";
 	import QuestionPicker from "$lib/components/QuestionPicker.svelte";
 
-	const project = $derived(cockpit.projects[cockpit.projectIndex]);
-	const assistant = $derived(project ? project.assistants[cockpit.assistantIndex] : undefined);
+	// In single view no props are passed → falls back to the globally-selected assistant.
+	// In the grid each pane passes its own project/assistant and sets `compact` to slim the chrome.
+	let { project: projectProp, assistant: assistantProp, compact = false }:
+		{ project?: Project; assistant?: Assistant; compact?: boolean } = $props();
+
+	const project = $derived(projectProp ?? cockpit.projects[cockpit.projectIndex]);
+	const assistant = $derived(assistantProp ?? (project ? project.assistants[cockpit.assistantIndex] : undefined));
 	const status = $derived(assistant ? STATUS_META[assistant.status] : STATUS_META.idle);
 	/** Stable key for this assistant's PTY/tmux session. */
 	const sessionKey = $derived(assistant && project ? `${project.id}::${assistant.id}` : "");
@@ -119,13 +125,15 @@
 		>
 			{assistant.autonomous ? "⚡ Autonomous" : "🔒 Default"}
 		</button>
-		<button class="act" title="Search">⌕</button>
-		<button class="termbtn" class:on={advanced} onclick={() => (advanced = !advanced)} title="Toggle the raw terminal">
-			⌘ Terminal
-		</button>
+		{#if !compact}
+			<button class="act" title="Search">⌕</button>
+			<button class="termbtn" class:on={advanced} onclick={() => (advanced = !advanced)} title="Toggle the raw terminal">
+				⌘ Terminal
+			</button>
+		{/if}
 	</header>
 
-	{#if advanced}
+	{#if advanced && !compact}
 		<div class="termpanel">
 			<div class="termhead">
 				<span>▸ Terminal <span class="dim">· {assistant.name} · {sessionKey}</span></span>

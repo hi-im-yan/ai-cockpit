@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { cockpit, selectAssistant, addAssistant, requestCloseAssistant } from "$lib/cockpit.svelte";
+	import { cockpit, selectAssistant, addAssistant, requestCloseAssistant, togglePin } from "$lib/cockpit.svelte";
 	import { STATUS_META } from "$lib/types";
 	import type { Assistant, Status } from "$lib/types";
 
@@ -64,6 +64,12 @@
 			</span>
 			{#if a.unread}<span class="un">{a.unread}</span>{/if}
 		</button>
+		<button
+			class="si-pin"
+			class:pinned={a.pinned}
+			title={a.pinned ? "Unpin from grid" : "Pin to grid view"}
+			onclick={() => togglePin(a)}
+		>📌</button>
 		<button class="si-x" title="Close assistant" onclick={() => requestCloseAssistant(cockpit.projectIndex, i)}>×</button>
 	</div>
 {/snippet}
@@ -100,7 +106,7 @@
 	.si-wrap { position: relative; }
 	.si {
 		display: flex; align-items: center; gap: 11px; width: 100%;
-		padding: 9px 30px 9px 10px; border-radius: 12px; border: none; background: transparent;
+		padding: 9px 52px 9px 10px; border-radius: 12px; border: none; background: transparent;
 		cursor: pointer; margin-bottom: 2px; transition: .12s; text-align: left;
 	}
 	.si:hover { background: #ece8f9; }
@@ -139,6 +145,15 @@
 		0%, 100% { background: rgba(var(--attn-perm), .18); box-shadow: inset 3px 0 0 rgba(var(--attn-perm), .6); }
 		50%      { background: rgba(var(--attn-perm), .48); box-shadow: inset 3px 0 0 rgba(var(--attn-perm), 1); }
 	}
+	.si-pin {
+		position: absolute; right: 31px; top: 50%; transform: translateY(-50%);
+		border: none; background: transparent; font-size: 12px; line-height: 1;
+		cursor: pointer; padding: 3px 4px; border-radius: 6px; opacity: 0; transition: .12s;
+		filter: grayscale(1); /* faded until pinned, so it reads as an action, not a state */
+	}
+	.si-wrap:hover .si-pin { opacity: .55; }
+	.si-pin:hover { opacity: 1; background: var(--input-bg); }
+	.si-pin.pinned { opacity: 1; filter: none; }
 	.si-x {
 		position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
 		border: none; background: transparent; color: var(--muted); font-size: 16px; line-height: 1;

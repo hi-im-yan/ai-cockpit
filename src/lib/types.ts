@@ -44,6 +44,8 @@ export interface Assistant {
 	/** Transient: true while a backend Claude session is running (ongoing). Drives the "Online"
 	 * sidebar grouping. Set on first message, cleared when the process exits/closes. Reset on launch. */
 	live?: boolean;
+	/** Persisted: the user pinned this assistant into the multi-pane grid view. */
+	pinned?: boolean;
 }
 
 /** One selectable choice in an {@link AskQuestion}. */

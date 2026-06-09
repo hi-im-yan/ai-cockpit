@@ -1,17 +1,20 @@
 <script lang="ts">
-	import { cockpit, selectProject, createProject, requestCloseProject } from "$lib/cockpit.svelte";
+	import { cockpit, selectProject, createProject, requestCloseProject, setLayout } from "$lib/cockpit.svelte";
 
 	let editingId = $state<string | null>(null);
 	let showNew = $state(false);
 	let newName = $state("");
 
 	const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-	async function winAction(action: "minimize" | "toggleMaximize" | "close") {
+	async function winAction(action: "minimize" | "toggleMaximize" | "toggleFullscreen" | "close") {
 		if (!isTauri) return;
 		const { getCurrentWindow } = await import("@tauri-apps/api/window");
 		const w = getCurrentWindow();
 		if (action === "minimize") await w.minimize();
 		else if (action === "toggleMaximize") await w.toggleMaximize();
+		// True fullscreen (fills the screen edge-to-edge). toggleMaximize is unreliable on the
+		// borderless window under WebKitGTK/WSLg, so the ▢ button drives fullscreen instead.
+		else if (action === "toggleFullscreen") await w.setFullscreen(!(await w.isFullscreen()));
 		else await w.close();
 	}
 
@@ -84,11 +87,15 @@
 
 	<button class="ptab add" onclick={openNew}>+ Project</button>
 	<span class="sp" data-tauri-drag-region></span>
+	<span class="seg">
+		<button class="sgb" class:on={cockpit.layout === "single"} onclick={() => setLayout("single")} title="Single chat view">▭</button>
+		<button class="sgb" class:on={cockpit.layout === "grid"} onclick={() => setLayout("grid")} title="Grid view — see pinned assistants side by side">▦</button>
+	</span>
 	<button class="ic" title="Search">⌕</button>
 	<button class="ic" title="Settings — theme, font, size" onclick={() => (cockpit.settingsOpen = true)}>⚙</button>
 	<span class="windiv"></span>
 	<button class="winbtn" onclick={() => winAction("minimize")} title="Minimize" aria-label="Minimize">─</button>
-	<button class="winbtn" onclick={() => winAction("toggleMaximize")} title="Maximize" aria-label="Maximize">▢</button>
+	<button class="winbtn" onclick={() => winAction("toggleFullscreen")} title="Toggle full screen" aria-label="Full screen">▢</button>
 	<button class="winbtn close" onclick={() => winAction("close")} title="Close" aria-label="Close">✕</button>
 </nav>
 
@@ -162,6 +169,18 @@
 		display: flex; align-items: center; justify-content: center;
 	}
 	.ic:hover { background: rgba(255,255,255,.14); }
+
+	/* view-mode segmented toggle (single / grid) */
+	.seg {
+		display: inline-flex; background: rgba(255,255,255,.07); border-radius: 10px; padding: 3px; gap: 2px; margin-right: 2px;
+	}
+	.sgb {
+		width: 30px; height: 28px; border: none; background: transparent; color: #b7b0d4;
+		font-size: 13px; cursor: pointer; border-radius: 7px;
+		display: flex; align-items: center; justify-content: center;
+	}
+	.sgb:hover { color: #fff; }
+	.sgb.on { background: rgba(255,255,255,.18); color: #fff; }
 
 	.windiv { width: 1px; height: 20px; background: rgba(255,255,255,.14); margin: 0 6px 0 4px; }
 	.winbtn {

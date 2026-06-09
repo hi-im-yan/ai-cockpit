@@ -16,7 +16,18 @@ export const cockpit = $state({
 	pickerOpen: false, // the in-app folder picker (for adding an assistant)
 	settingsOpen: false, // the appearance settings panel
 	settings: { theme: "lavender", font: "jakarta", fontSize: "md" },
+	layout: "single" as "single" | "grid", // chat view: one assistant, or a grid of pinned ones
 });
+
+/** Switches the chat area between the single focused view and the multi-pane grid. */
+export function setLayout(mode: "single" | "grid"): void {
+	cockpit.layout = mode;
+}
+
+/** Pins/unpins an assistant into the grid view. */
+export function togglePin(assistant: Assistant): void {
+	assistant.pinned = !assistant.pinned;
+}
 
 /** Switch the active project (top navbar tab) and reset to its first assistant. */
 export function selectProject(index: number): void {
