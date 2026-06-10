@@ -1,0 +1,25 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#7c5cff"/>
+      <stop offset="1" stop-color="#ff8a5b"/>
+    </linearGradient>
+    <!-- soft top sheen for a little depth (kept light so the gradient stays vibrant) -->
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.10"/>
+      <stop offset="0.5" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- brand squircle -->
+  <rect x="0" y="0" width="1024" height="1024" rx="232" fill="url(#bg)"/>
+  <rect x="0" y="0" width="1024" height="1024" rx="232" fill="url(#sheen)"/>
+
+  <!-- speech bubble (tail first, under the body so the seam is hidden) -->
+  <path d="M312,648 L300,792 L420,664 Z" fill="#ffffff" stroke="#ffffff" stroke-width="10" stroke-linejoin="round"/>
+  <rect x="212" y="246" width="600" height="420" rx="104" fill="#ffffff"/>
+
+  <!-- prompt: chevron + block caret, in the two brand colours -->
+  <polyline points="398,360 508,456 398,552" fill="none" stroke="#7c5cff" stroke-width="52" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="574" y="380" width="50" height="152" rx="25" fill="#ff8a5b"/>
+</svg>
