@@ -1,9 +1,10 @@
 <script lang="ts">
 	import { onMount } from "svelte";
 	import TopNav from "$lib/components/TopNav.svelte";
-	import Sidebar from "$lib/components/Sidebar.svelte";
 	import Chat from "$lib/components/Chat.svelte";
-	import ChatGrid from "$lib/components/ChatGrid.svelte";
+	import HudStage from "$lib/components/HudStage.svelte";
+	import ChatResizer from "$lib/components/ChatResizer.svelte";
+	import NewProjectModal from "$lib/components/NewProjectModal.svelte";
 	import FolderPicker from "$lib/components/FolderPicker.svelte";
 	import Settings from "$lib/components/Settings.svelte";
 	import ResizeGrips from "$lib/components/ResizeGrips.svelte";
@@ -18,19 +19,17 @@
 </script>
 
 <!--
-	Layout 2 (locked): top project tabs span the full width; the project's assistant
-	list sits on the left; the chat fills the rest. Each component owns its own
-	grid-area placement in its scoped styles.
+	Top project tabs span the full width (each tab = one Claude session). The conversation
+	is a left column; the HUD stage (agent tree + todos + tool feed) fills the rest. Each
+	component owns its own grid-area placement in its scoped styles.
 -->
-<div class="app">
+<div class="app" style="--chat-w: {cockpit.chatWidth}px">
 	<TopNav />
-	<Sidebar />
-	{#if cockpit.layout === "grid"}
-		<ChatGrid />
-	{:else}
-		<Chat />
-	{/if}
+	<Chat />
+	<HudStage />
 </div>
+<ChatResizer />
+<NewProjectModal />
 <FolderPicker />
 <Settings />
 <ResizeGrips />

@@ -1,9 +1,7 @@
 <script lang="ts">
-	import { cockpit, selectProject, createProject, requestCloseProject, setLayout } from "$lib/cockpit.svelte";
+	import { cockpit, selectProject, openNewProject, requestCloseProject } from "$lib/cockpit.svelte";
 
 	let editingId = $state<string | null>(null);
-	let showNew = $state(false);
-	let newName = $state("");
 
 	const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 	async function winAction(action: "minimize" | "toggleMaximize" | "toggleFullscreen" | "close") {
@@ -41,24 +39,13 @@
 		node.focus();
 		node.select();
 	}
-
-	function openNew() {
-		newName = "";
-		showNew = true;
-	}
-
-	function confirmNew() {
-		createProject(newName);
-		showNew = false;
-	}
 </script>
 
 <nav class="topnav" onpointerdown={startDrag} ondblclick={onBarDblClick} data-tauri-drag-region>
 	<span class="brand" data-tauri-drag-region></span>
 
 	{#each cockpit.projects as project, i (project.id)}
-		{@const waiting = project.assistants.filter((a) => a.attention).length}
-		{@const hasPerm = project.assistants.some((a) => a.attention === "permission")}
+		{@const hasPerm = project.attention === "permission"}
 		{#if editingId === project.id}
 			<input
 				class="ptab-edit"
@@ -78,19 +65,15 @@
 				>
 					<span class="sw" style="background:{project.color}"></span>
 					{project.name}
-					{#if waiting > 0}<span class="un" class:perm={hasPerm} title="{waiting} waiting for you">{waiting}</span>{/if}
+					{#if project.attention}<span class="un" class:perm={hasPerm} title="needs you">!</span>{/if}
 				</button>
 				<button class="tab-x" title="Close project" onclick={() => requestCloseProject(i)}>×</button>
 			</span>
 		{/if}
 	{/each}
 
-	<button class="ptab add" onclick={openNew}>+ Project</button>
+	<button class="ptab add" onclick={openNewProject}>+ Project</button>
 	<span class="sp" data-tauri-drag-region></span>
-	<span class="seg">
-		<button class="sgb" class:on={cockpit.layout === "single"} onclick={() => setLayout("single")} title="Single chat view">▭</button>
-		<button class="sgb" class:on={cockpit.layout === "grid"} onclick={() => setLayout("grid")} title="Grid view — see pinned assistants side by side">▦</button>
-	</span>
 	<button class="ic" title="Search">⌕</button>
 	<button class="ic" title="Settings — theme, font, size" onclick={() => (cockpit.settingsOpen = true)}>⚙</button>
 	<span class="windiv"></span>
@@ -98,24 +81,6 @@
 	<button class="winbtn" onclick={() => winAction("toggleFullscreen")} title="Toggle full screen" aria-label="Full screen">▢</button>
 	<button class="winbtn close" onclick={() => winAction("close")} title="Close" aria-label="Close">✕</button>
 </nav>
-
-{#if showNew}
-	<div class="overlay">
-		<div class="modal">
-			<h3>New project</h3>
-			<input
-				bind:value={newName}
-				use:focusNode
-				placeholder="Project name (e.g. Grita Bingo)"
-				onkeydown={(e) => { if (e.key === "Enter") confirmNew(); if (e.key === "Escape") showNew = false; }}
-			/>
-			<div class="row">
-				<button class="ghost" onclick={() => (showNew = false)}>Cancel</button>
-				<button class="primary" onclick={confirmNew}>Create</button>
-			</div>
-		</div>
-	</div>
-{/if}
 
 <style>
 	.topnav {
@@ -170,18 +135,6 @@
 	}
 	.ic:hover { background: rgba(255,255,255,.14); }
 
-	/* view-mode segmented toggle (single / grid) */
-	.seg {
-		display: inline-flex; background: rgba(255,255,255,.07); border-radius: 10px; padding: 3px; gap: 2px; margin-right: 2px;
-	}
-	.sgb {
-		width: 30px; height: 28px; border: none; background: transparent; color: #b7b0d4;
-		font-size: 13px; cursor: pointer; border-radius: 7px;
-		display: flex; align-items: center; justify-content: center;
-	}
-	.sgb:hover { color: #fff; }
-	.sgb.on { background: rgba(255,255,255,.18); color: #fff; }
-
 	.windiv { width: 1px; height: 20px; background: rgba(255,255,255,.14); margin: 0 6px 0 4px; }
 	.winbtn {
 		width: 36px; height: 34px; border: none; background: transparent; color: #b3acc9;
@@ -190,28 +143,4 @@
 	}
 	.winbtn:hover { background: rgba(255,255,255,.1); color: #fff; }
 	.winbtn.close:hover { background: #e8423c; color: #fff; }
-
-	.overlay {
-		position: fixed; inset: 0; z-index: 100;
-		background: rgba(15,12,22,.45); display: flex; align-items: center; justify-content: center;
-	}
-	.modal {
-		background: #fff; border-radius: 16px; padding: 22px; width: 340px;
-		box-shadow: 0 30px 80px rgba(0,0,0,.4);
-	}
-	.modal h3 { font-size: 16px; font-weight: 800; color: #1d1b2b; margin-bottom: 14px; }
-	.modal input {
-		width: 100%; font-family: inherit; font-size: 14px; padding: 11px 13px;
-		border: 1px solid #e0d9f3; border-radius: 11px; outline: none; color: #1d1b2b;
-	}
-	.modal input:focus { border-color: #7c5cff; }
-	.modal .row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
-	.modal .ghost {
-		background: transparent; border: 1px solid #e0d9f3; color: #6b6385;
-		font-weight: 700; font-size: 13px; padding: 9px 14px; border-radius: 10px; cursor: pointer;
-	}
-	.modal .primary {
-		background: #7c5cff; border: none; color: #fff;
-		font-weight: 700; font-size: 13px; padding: 9px 16px; border-radius: 10px; cursor: pointer;
-	}
 </style>

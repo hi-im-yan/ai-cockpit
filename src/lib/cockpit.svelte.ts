@@ -1,75 +1,128 @@
 import { seedProjects } from "./data";
-import { toolVerb } from "./types";
-import type { Assistant, PendingQuestion, Project } from "./types";
+import { toolVerb, SUBAGENT_COLORS } from "./types";
+import type { AgentEventPayload, FeaturePlan, ImageAttachment, PendingQuestion, Project, Repo, Subagent, ToolEvent } from "./types";
 import type { Store } from "@tauri-apps/plugin-store";
 
 /**
  * Central reactive state for the cockpit (Svelte 5 runes module). Components read
- * `cockpit` fields directly (don't destructure — that breaks reactivity). Conversations
- * are driven by the headless Claude engine in the Rust backend; this module owns the
- * send action and the listener that routes streamed replies back into the right chat.
+ * `cockpit` fields directly (don't destructure — that breaks reactivity).
+ *
+ * Each **project** is ONE headless Claude session (driven by the Rust engine) rooted at a
+ * workspace folder; Claude fans work out to subagents. This module owns the send action and
+ * the listener that turns the session's event stream into chat + live HUD state
+ * (todos / subagents / tool feed).
  */
 export const cockpit = $state({
 	projects: seedProjects,
 	projectIndex: 0,
-	assistantIndex: 0,
-	pickerOpen: false, // the in-app folder picker (for adding an assistant)
+	newProjectOpen: false, // the "new project" modal (name + repos)
+	pickerOpen: false, // the generic folder chooser (used to add a repo)
 	settingsOpen: false, // the appearance settings panel
 	settings: { theme: "lavender", font: "jakarta", fontSize: "md" },
-	layout: "single" as "single" | "grid", // chat view: one assistant, or a grid of pinned ones
+	chatWidth: 380, // px width of the chat column (drag the divider to resize); persisted
 });
 
-/** Switches the chat area between the single focused view and the multi-pane grid. */
-export function setLayout(mode: "single" | "grid"): void {
-	cockpit.layout = mode;
+/** Sets the chat column width (px), clamped to a sane range. Driven by the drag divider. */
+export function setChatWidth(px: number): void {
+	cockpit.chatWidth = Math.max(280, Math.min(760, Math.round(px)));
 }
 
-/** Pins/unpins an assistant into the grid view. */
-export function togglePin(assistant: Assistant): void {
-	assistant.pinned = !assistant.pinned;
-}
-
-/** Switch the active project (top navbar tab) and reset to its first assistant. */
+/** Switch the active project (top navbar tab); viewing it clears its "needs you" flag. */
 export function selectProject(index: number): void {
 	cockpit.projectIndex = index;
-	cockpit.assistantIndex = 0;
-	const a = cockpit.projects[index]?.assistants[0];
-	if (a) a.attention = undefined;
+	const p = cockpit.projects[index];
+	if (p) {
+		p.attention = undefined;
+		void refreshPlan(p); // pull its file-based plan right away
+	}
 }
 
-/** Switch the active assistant (sidebar list) within the current project. */
-export function selectAssistant(index: number): void {
-	cockpit.assistantIndex = index;
-	const a = cockpit.projects[cockpit.projectIndex]?.assistants[index];
-	if (a) a.attention = undefined; // viewing it clears the "needs you" flag
+/**
+ * Reads the project's file-based plan from each repo's `.tasks/active/<feature>/INDEX.md` and
+ * stores it on `project.plan`. Polled (and called on select/turn-end) so the Plan ticks live.
+ */
+export async function refreshPlan(project: Project): Promise<void> {
+	if (!isTauri || !project) return;
+	const dirs = (project.repos ?? []).map((r) => r.path);
+	if (dirs.length === 0) {
+		project.plan = [];
+		return;
+	}
+	try {
+		const { invoke } = await import("@tauri-apps/api/core");
+		project.plan = await invoke<FeaturePlan[]>("read_task_plan", { dirs });
+	} catch {
+		/* leave the last-known plan in place on a transient read error */
+	}
 }
 
-/** True if the given session key is the one currently on screen. */
+/** True if the given session key (a project id) is the one currently on screen. */
 function isViewing(key: string): boolean {
-	const p = cockpit.projects[cockpit.projectIndex];
-	const a = p?.assistants[cockpit.assistantIndex];
-	return !!(p && a && `${p.id}::${a.id}` === key);
+	return cockpit.projects[cockpit.projectIndex]?.id === key;
 }
 
 const PROJECT_COLORS = ["#ff6b6b", "#7c5cff", "#2bb673", "#f4a100", "#00b8d4", "#ff7eb6"];
-/** Original demo project ids — removed once via a one-time migration in initStore. */
-const LEGACY_SEED_IDS = ["grita-bingo", "blogfolio", "vps-infra"];
-const ASSISTANT_BGS = ["#ffe3d6", "#e9e3ff", "#d9f3e4", "#dbe6ff", "#fff1cc"];
+
+/** The last path segment, used as a default repo/project label. */
+const basename = (p: string) => p.replace(/\/+$/, "").split("/").pop() || p;
+
+/** Opens the "new project" modal (name + repos). */
+export function openNewProject(): void {
+	cockpit.newProjectOpen = true;
+}
+
+/** Closes the "new project" modal. */
+export function closeNewProject(): void {
+	cockpit.newProjectOpen = false;
+}
+
+// --- Generic folder chooser: a promise-based picker the new-project modal awaits to add a
+// repo. `requestFolder()` opens the picker and resolves with the chosen path (or null on
+// cancel); the FolderPicker component calls `resolveFolder()`. ---
+let pickerResolve: ((path: string | null) => void) | null = null;
+
+/** Opens the folder picker and resolves with the chosen absolute path (null if cancelled). */
+export function requestFolder(): Promise<string | null> {
+	cockpit.pickerOpen = true;
+	return new Promise((resolve) => {
+		pickerResolve = resolve;
+	});
+}
+
+/** Called by the FolderPicker on select/cancel to settle the pending `requestFolder()`. */
+export function resolveFolder(path: string | null): void {
+	cockpit.pickerOpen = false;
+	pickerResolve?.(path);
+	pickerResolve = null;
+}
 
 /**
- * Creates a new, empty project tab with the given name (just an umbrella — its assistants
- * each get their own repo folder via `addAssistant`). Selects the new tab.
+ * Creates a project from a name and its repos. The first repo is the session's primary cwd
+ * (Claude + Advanced terminal run there); the rest are granted via `--add-dir` so one session
+ * spans front/back/cron. Selects the new tab.
  */
-export function createProject(name: string): void {
+export function createProject(name: string, repos: Repo[]): void {
+	if (repos.length === 0) return;
 	cockpit.projects.push({
 		id: `proj-${Date.now()}`,
-		name: name.trim() || "New Project",
+		name: name.trim() || repos[0].label,
 		color: PROJECT_COLORS[cockpit.projects.length % PROJECT_COLORS.length],
-		assistants: [],
+		emoji: "🤖",
+		repos,
+		cwd: repos[0].path,
+		preview: repos.length === 1 ? `📂 ${repos[0].label}` : `📂 ${repos.length} repos`,
+		messages: [],
+		status: "idle",
+		plan: [],
+		todos: [],
+		subagents: [],
+		toolFeed: [],
 	});
 	cockpit.projectIndex = cockpit.projects.length - 1;
-	cockpit.assistantIndex = 0;
+	cockpit.newProjectOpen = false;
 }
+
+const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 /** Best-effort: stops a session's Claude process + tmux/PTY in the backend. */
 function killSession(key: string): void {
@@ -80,33 +133,20 @@ function killSession(key: string): void {
 	});
 }
 
-/** Stops an assistant's Claude process so the next message respawns it (e.g. after toggling autonomy). */
+/** Stops a session's Claude process so the next message respawns it (e.g. after toggling autonomy). */
 export function stopAgent(key: string): void {
 	if (!isTauri || !key) return;
 	void import("@tauri-apps/api/core").then(({ invoke }) => invoke("agent_stop", { key }).catch(() => {}));
 }
 
-/** Closes a project: ends all its assistants' sessions and removes the tab. */
+/** Closes a project: ends its session and removes the tab. */
 export function closeProject(index: number): void {
 	const project = cockpit.projects[index];
 	if (!project) return;
-	for (const a of project.assistants) killSession(`${project.id}::${a.id}`);
+	killSession(project.id);
 	cockpit.projects.splice(index, 1);
 	if (cockpit.projectIndex >= cockpit.projects.length) {
 		cockpit.projectIndex = Math.max(0, cockpit.projects.length - 1);
-	}
-	cockpit.assistantIndex = 0;
-}
-
-/** Closes a single assistant: ends its session and removes it from the project. */
-export function closeAssistant(projectIndex: number, assistantIndex: number): void {
-	const project = cockpit.projects[projectIndex];
-	if (!project) return;
-	const assistant = project.assistants[assistantIndex];
-	if (assistant) killSession(`${project.id}::${assistant.id}`);
-	project.assistants.splice(assistantIndex, 1);
-	if (cockpit.assistantIndex >= project.assistants.length) {
-		cockpit.assistantIndex = Math.max(0, project.assistants.length - 1);
 	}
 }
 
@@ -116,7 +156,7 @@ export async function requestCloseProject(index: number): Promise<void> {
 	if (!project) return;
 	if (isTauri) {
 		const { ask } = await import("@tauri-apps/plugin-dialog");
-		const ok = await ask(`Close “${project.name}” and end all its assistant sessions?`, {
+		const ok = await ask(`Close “${project.name}” and end its session?`, {
 			title: "Close project",
 			kind: "warning",
 		});
@@ -125,68 +165,11 @@ export async function requestCloseProject(index: number): Promise<void> {
 	closeProject(index);
 }
 
-/** Confirms (native dialog) then closes an assistant. */
-export async function requestCloseAssistant(projectIndex: number, assistantIndex: number): Promise<void> {
-	const project = cockpit.projects[projectIndex];
-	const assistant = project?.assistants[assistantIndex];
-	if (!assistant) return;
-	if (isTauri) {
-		const { ask } = await import("@tauri-apps/plugin-dialog");
-		const ok = await ask(`Close “${assistant.name}” and end its session?`, {
-			title: "Close assistant",
-			kind: "warning",
-		});
-		if (!ok) return;
-	}
-	closeAssistant(projectIndex, assistantIndex);
-}
+const keyOf = (p: Project) => p.id;
 
-/** Opens the in-app folder picker to add an assistant to the current project. */
-export function addAssistant(): void {
-	if (cockpit.projects.length === 0) return;
-	cockpit.pickerOpen = true;
-}
-
-/**
- * Adds an assistant rooted at the chosen repo directory (called by the folder picker).
- * That folder is the assistant's working dir — both its headless Claude runs and its
- * Advanced terminal act there. (One project can hold a Frontend assistant in the frontend
- * repo, a Backend assistant in the backend repo, etc.)
- */
-export function confirmAddAssistant(path: string): void {
-	const project = cockpit.projects[cockpit.projectIndex];
-	if (!project) return;
-	const name = path.replace(/\/+$/, "").split("/").pop() || "Assistant";
-	project.assistants.push(newAssistant(name, path, project.assistants.length));
-	cockpit.assistantIndex = project.assistants.length - 1;
-	cockpit.pickerOpen = false;
-}
-
-function newAssistant(name: string, cwd: string, index: number) {
-	return {
-		id: `a-${Date.now()}`,
-		name,
-		emoji: "🤖",
-		bg: ASSISTANT_BGS[index % ASSISTANT_BGS.length],
-		status: "idle" as const,
-		preview: `📂 ${cwd}`,
-		cwd,
-		messages: [],
-	};
-}
-
-const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-
-const keyOf = (p: Project, a: Assistant) => `${p.id}::${a.id}`;
-
-/** Resolves an assistant by its session key. */
-function findByKey(key: string): Assistant | undefined {
-	for (const p of cockpit.projects) {
-		for (const a of p.assistants) {
-			if (keyOf(p, a) === key) return a;
-		}
-	}
-	return undefined;
+/** Resolves a project by its session key. */
+function findByKey(key: string): Project | undefined {
+	return cockpit.projects.find((p) => p.id === key);
 }
 
 // --- Streaming smoothing. Deltas arrive in phrase-sized chunks; instead of dumping each
@@ -208,15 +191,15 @@ function pumpStreams(): void {
 	for (const key of Array.from(streamTarget.keys())) {
 		const target = streamTarget.get(key) ?? "";
 		const shown = streamShown.get(key) ?? 0;
-		const assistant = findByKey(key);
+		const project = findByKey(key);
 		const idx = streamMsgIdx.get(key);
 		if (shown < target.length) {
 			// Catch up at a rate proportional to how far behind we are: smooth, but never lags.
 			const next = Math.min(target.length, shown + Math.max(2, Math.round((target.length - shown) / 6)));
 			streamShown.set(key, next);
-			if (assistant && idx !== undefined) {
-				assistant.messages[idx].text = target.slice(0, next);
-				assistant.preview = target.slice(0, 60);
+			if (project && idx !== undefined) {
+				project.messages[idx].text = target.slice(0, next);
+				project.preview = target.slice(0, 60);
 			}
 		} else if (streamDone.has(key)) {
 			streamTarget.delete(key);
@@ -230,39 +213,47 @@ function pumpStreams(): void {
 }
 
 /**
- * Sends a user message to an assistant's Claude session. Pushes the user bubble, marks
- * the assistant as working, and kicks off the headless run — replies arrive via the
- * `agent://event` listener registered by `initAgent()`.
+ * Sends a user message to a project's Claude session. Pushes the user bubble, resets the
+ * per-turn HUD working set (subagents + tool feed), marks the session working, and kicks off
+ * the headless run — replies/HUD events arrive via the `agent://event` listener.
  */
-export async function sendMessage(project: Project, assistant: Assistant, text: string): Promise<void> {
+export async function sendMessage(project: Project, text: string, images: ImageAttachment[] = []): Promise<void> {
 	const trimmed = text.trim();
-	if (!trimmed) return;
+	if (!trimmed && images.length === 0) return;
 
-	assistant.messages.push({ from: "me", text: trimmed });
-	assistant.preview = trimmed;
-	assistant.status = "working";
-	assistant.activity = trimmed.startsWith("/") ? `running ${trimmed.split(/\s+/)[0]}…` : "thinking…";
+	project.messages.push({ from: "me", text: trimmed, images: images.length ? images : undefined });
+	project.preview = trimmed || (images.length ? "📷 Image" : "");
+	project.status = "working";
+	project.activity = trimmed.startsWith("/") ? `running ${trimmed.split(/\s+/)[0]}…` : "thinking…";
+	// Fresh turn: clear the live working set so the stage shows *this* turn's activity.
+	// (Todos are kept cumulative — they mirror Claude's running plan + its global task ids.)
+	project.subagents = [];
+	project.toolFeed = [];
 
 	if (!isTauri) {
-		assistant.messages.push({ from: "assistant", text: "Run the desktop app to reach Claude." });
-		assistant.status = "idle";
+		project.messages.push({ from: "assistant", text: "Run the desktop app to reach Claude." });
+		project.status = "idle";
 		return;
 	}
 
-	const key = keyOf(project, assistant);
-	assistant.live = true; // a backend session is now running (stays up across turns)
+	const key = keyOf(project);
+	project.live = true; // a backend session is now running (stays up across turns)
+	// Secondary repos are granted to the one session via --add-dir.
+	const addDirs = (project.repos ?? []).slice(1).map((r) => r.path);
 	try {
 		const { invoke } = await import("@tauri-apps/api/core");
 		await invoke("agent_send", {
 			key,
-			cwd: assistant.cwd,
+			cwd: project.cwd,
+			addDirs,
 			message: trimmed,
-			skipPermissions: assistant.autonomous ?? false,
-			resume: assistant.sessionId,
+			images,
+			skipPermissions: project.autonomous ?? false,
+			resume: project.sessionId,
 		});
 	} catch (e) {
-		assistant.messages.push({ from: "assistant", text: `⚠️ ${e}` });
-		assistant.status = "idle";
+		project.messages.push({ from: "assistant", text: `⚠️ ${e}` });
+		project.status = "idle";
 	}
 }
 
@@ -271,121 +262,243 @@ export async function sendMessage(project: Project, assistant: Assistant, text: 
  * unblocks Claude's turn. `selections` is aligned to the question list — one array of
  * chosen labels per question. Also records the choice as a chat bubble for history.
  */
-export async function answerQuestion(assistant: Assistant, selections: string[][]): Promise<void> {
-	const pending = assistant.pendingQuestion;
+export async function answerQuestion(project: Project, selections: string[][]): Promise<void> {
+	const pending = project.pendingQuestion;
 	if (!pending) return;
-	assistant.pendingQuestion = undefined;
+	project.pendingQuestion = undefined;
 
 	const summary = pending.questions
 		.map((q, i) => `${q.header}: ${(selections[i] ?? []).join(", ") || "(no selection)"}`)
 		.join(" · ");
-	assistant.messages.push({ from: "me", text: summary });
-	assistant.preview = summary;
-	assistant.status = "working";
-	assistant.activity = "responding…";
+	project.messages.push({ from: "me", text: summary });
+	project.preview = summary;
+	project.status = "working";
+	project.activity = "responding…";
 
 	if (!isTauri) return;
 	const { invoke } = await import("@tauri-apps/api/core");
 	await invoke("agent_answer", { requestId: pending.requestId, answers: selections }).catch((e) => {
-		assistant.messages.push({ from: "assistant", text: `⚠️ ${e}` });
-		assistant.status = "idle";
-		assistant.activity = undefined;
+		project.messages.push({ from: "assistant", text: `⚠️ ${e}` });
+		project.status = "idle";
+		project.activity = undefined;
 	});
 }
 
-/** Registers the listeners that route streamed Claude events into conversations. */
+/** Finds a tool call in the feed by its tool_use id (inner subagent steps share the same refs). */
+function findToolEvent(project: Project, id?: string): ToolEvent | undefined {
+	if (!id) return undefined;
+	return project.toolFeed.find((t) => t.id === id);
+}
+
+/** Applies a `TaskCreate`/`TaskUpdate` to the project's todo list (cumulative; ids are Claude's). */
+function applyTodo(project: Project, name?: string, data?: unknown): void {
+	const input = (data ?? {}) as { taskId?: string | number; subject?: string; description?: string; status?: string };
+	if (name === "TaskCreate") {
+		// TaskCreate carries no id — Claude assigns sequential global ids (1,2,3…); mirror that.
+		const id = input.taskId != null ? String(input.taskId) : String(project.todos.length + 1);
+		project.todos.push({
+			id,
+			subject: input.subject ?? input.description ?? "task",
+			description: input.description,
+			status: "pending",
+		});
+	} else if (name === "TaskUpdate") {
+		const t = project.todos.find((x) => x.id === String(input.taskId));
+		if (t && input.status) t.status = input.status as typeof t.status;
+	}
+}
+
+/** Registers the listeners that route streamed Claude events into a project's chat + HUD. */
 export async function initAgent(): Promise<void> {
 	if (!isTauri) return;
 	const { listen } = await import("@tauri-apps/api/event");
 
+	// Poll the on-screen project's file-based plan so it ticks in near-real-time as Claude
+	// writes/updates its `.tasks/` INDEX files. Cheap (a few small file reads).
+	setInterval(() => {
+		const p = cockpit.projects[cockpit.projectIndex];
+		if (p) void refreshPlan(p);
+	}, 3000);
+
 	// Claude asked a multiple-choice question (via the ask_user MCP tool): show a picker.
 	await listen<PendingQuestion & { key: string }>("agent://question", (event) => {
 		const { key, requestId, questions } = event.payload;
-		const assistant = findByKey(key);
-		if (!assistant) return;
-		assistant.pendingQuestion = { requestId, questions };
-		assistant.status = "waiting";
-		assistant.activity = "waiting for your choice…";
-		if (!isViewing(key) && assistant.attention !== "permission") assistant.attention = "reply";
+		const project = findByKey(key);
+		if (!project) return;
+		project.pendingQuestion = { requestId, questions };
+		project.status = "waiting";
+		project.activity = "waiting for your choice…";
+		if (!isViewing(key) && project.attention !== "permission") project.attention = "reply";
 	});
 
-	await listen<{ key: string; kind: string; text?: string }>("agent://event", (event) => {
-		const { key, kind, text } = event.payload;
-		const assistant = findByKey(key);
-		if (!assistant) return;
+	await listen<AgentEventPayload>("agent://event", (event) => {
+		const p = event.payload;
+		const project = findByKey(p.key);
+		if (!project) return;
 
-		if (kind === "session" && text) {
-			// Remember Claude's session id so the next turn (and next launch) resumes context.
-			assistant.sessionId = text;
-		} else if (kind === "permission") {
-			// It got blocked — needs the user to raise its access. Red blink.
-			assistant.attention = "permission";
-		} else if (kind === "tool" && text) {
-			// Live status: surface what the assistant is doing right now.
-			assistant.status = "working";
-			assistant.activity = toolVerb(text);
-		} else if (kind === "assistant" && text) {
-			// Append the delta to the target buffer; the pump reveals it smoothly.
-			if (!streamMsgIdx.has(key)) {
-				streamMsgIdx.set(key, assistant.messages.push({ from: "assistant", text: "" }) - 1);
-				streamTarget.set(key, "");
-				streamShown.set(key, 0);
+		switch (p.kind) {
+			case "session":
+				// Remember Claude's session id so the next turn (and next launch) resumes context.
+				if (p.text) project.sessionId = p.text;
+				break;
+
+			case "permission":
+				// It got blocked — needs the user to raise its access. Red blink.
+				project.attention = "permission";
+				break;
+
+			case "subagent": {
+				// Claude spawned a subagent via the Agent tool → a live card.
+				const input = (p.data ?? {}) as { subagent_type?: string; description?: string; prompt?: string };
+				const index = project.subagents.length + 1;
+				const sa: Subagent = {
+					id: p.toolId ?? `sa-${Date.now()}`,
+					kind: input.subagent_type ?? "subagent",
+					description: input.description ?? p.name ?? "subagent",
+					prompt: input.prompt ?? "",
+					status: "running",
+					steps: [],
+					index,
+					color: SUBAGENT_COLORS[(index - 1) % SUBAGENT_COLORS.length],
+				};
+				project.subagents.push(sa);
+				project.status = "working";
+				project.activity = `delegating: ${sa.description}`;
+				break;
 			}
-			streamTarget.set(key, (streamTarget.get(key) ?? "") + text);
-			assistant.activity = "responding…";
-			ensurePump();
-		} else if (kind === "done") {
-			if (streamMsgIdx.has(key)) {
-				streamDone.add(key); // streamed reply: let the pump finish, then clean up
-			} else if (text) {
-				assistant.messages.push({ from: "assistant", text }); // non-streamed reply (e.g. command output)
-			} else {
-				// No visible output — confirm the turn ran (e.g. a successful /compact).
-				const lastUser = [...assistant.messages].reverse().find((m) => m.from === "me");
-				const cmd = lastUser?.text.trim().split(/\s+/)[0] ?? "";
-				assistant.messages.push({
-					from: "assistant",
-					text:
-						cmd === "/compact"
-							? "✓ Conversation compacted — context shrunk to save tokens."
-							: cmd.startsWith("/")
-								? `✓ \`${cmd}\` ran.`
-								: "✓ Done.",
-				});
+
+			case "todo":
+				applyTodo(project, p.name, p.data);
+				project.status = "working";
+				project.activity = toolVerb(p.name ?? "TaskCreate");
+				break;
+
+			case "tool": {
+				const ev: ToolEvent = {
+					id: p.toolId ?? `t-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+					name: p.name ?? "tool",
+					parentId: p.parentId,
+					input: p.data,
+					ts: Date.now(),
+				};
+				project.toolFeed.push(ev);
+				if (p.parentId) {
+					// Inner step of a subagent — file it under that card too (same ref).
+					project.subagents.find((s) => s.id === p.parentId)?.steps.push(ev);
+				}
+				project.status = "working";
+				project.activity = toolVerb(ev.name);
+				break;
 			}
-			assistant.status = "idle";
-			assistant.activity = undefined;
-			// A finished reply you haven't seen (you're elsewhere) → gentle blink.
-			if (!isViewing(key) && assistant.attention !== "permission") assistant.attention = "reply";
-		} else if (kind === "error") {
-			assistant.messages.push({ from: "assistant", text: `⚠️ ${text ?? "something went wrong"}` });
-			if (streamMsgIdx.has(key)) streamDone.add(key);
-			assistant.status = "idle";
-			assistant.activity = undefined;
-			if (!isViewing(key) && assistant.attention !== "permission") assistant.attention = "reply";
-		} else if (kind === "exit") {
-			// The Claude process ended. If it died mid-turn, note it; the next message respawns it.
-			if (assistant.status === "working") {
-				assistant.messages.push({ from: "assistant", text: "⚠️ The session ended. Send another message to restart it." });
+
+			case "tool_result": {
+				const ev = findToolEvent(project, p.toolId);
+				if (ev) {
+					ev.result = p.text;
+					ev.isError = p.isError;
+				}
+				// If this resolves a subagent's Agent call, finish the card.
+				const sa = project.subagents.find((s) => s.id === p.toolId);
+				if (sa) {
+					sa.status = p.isError ? "error" : "done";
+					sa.result = p.text;
+				}
+				break;
 			}
-			streamMsgIdx.delete(key);
-			streamTarget.delete(key);
-			streamShown.delete(key);
-			streamDone.delete(key);
-			assistant.status = "idle";
-			assistant.activity = undefined;
-			assistant.live = false; // session is no longer running → drops out of "Online"
+
+			case "assistant":
+				// Main-session text delta → append to the typewriter buffer (reveals smoothly).
+				if (p.text) {
+					if (!streamMsgIdx.has(p.key)) {
+						streamMsgIdx.set(p.key, project.messages.push({ from: "assistant", text: "" }) - 1);
+						streamTarget.set(p.key, "");
+						streamShown.set(p.key, 0);
+					}
+					streamTarget.set(p.key, (streamTarget.get(p.key) ?? "") + p.text);
+					project.activity = "responding…";
+					ensurePump();
+				}
+				break;
+
+			case "done":
+				if (streamMsgIdx.has(p.key)) {
+					streamDone.add(p.key); // streamed reply: let the pump finish, then clean up
+				} else if (p.text) {
+					project.messages.push({ from: "assistant", text: p.text }); // non-streamed reply
+				} else {
+					// No visible output — confirm the turn ran (e.g. a successful /compact).
+					const lastUser = [...project.messages].reverse().find((m) => m.from === "me");
+					const cmd = lastUser?.text.trim().split(/\s+/)[0] ?? "";
+					project.messages.push({
+						from: "assistant",
+						text:
+							cmd === "/compact"
+								? "✓ Conversation compacted — context shrunk to save tokens."
+								: cmd.startsWith("/")
+									? `✓ \`${cmd}\` ran.`
+									: "✓ Done.",
+					});
+				}
+				// Any subagent still marked running at turn end has effectively finished.
+				for (const s of project.subagents) if (s.status === "running") s.status = "done";
+				project.status = "idle";
+				project.activity = undefined;
+				void refreshPlan(project); // catch the final task-file state immediately
+				if (!isViewing(p.key) && project.attention !== "permission") project.attention = "reply";
+				break;
+
+			case "error":
+				project.messages.push({ from: "assistant", text: `⚠️ ${p.text ?? "something went wrong"}` });
+				if (streamMsgIdx.has(p.key)) streamDone.add(p.key);
+				project.status = "idle";
+				project.activity = undefined;
+				if (!isViewing(p.key) && project.attention !== "permission") project.attention = "reply";
+				break;
+
+			case "exit":
+				// The Claude process ended. If it died mid-turn, note it; the next message respawns it.
+				if (project.status === "working") {
+					project.messages.push({ from: "assistant", text: "⚠️ The session ended. Send another message to restart it." });
+				}
+				streamMsgIdx.delete(p.key);
+				streamTarget.delete(p.key);
+				streamShown.delete(p.key);
+				streamDone.delete(p.key);
+				for (const s of project.subagents) if (s.status === "running") s.status = "done";
+				project.status = "idle";
+				project.activity = undefined;
+				project.live = false; // session is no longer running
+				break;
 		}
-		// kind === "tool" is ignored for now (could surface "using Edit…" later).
 	});
 }
 
 let store: Store | undefined;
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
 
+/** Ensures a loaded project matches the current shape and clears stale runtime state. */
+function normalizeProject(p: Project): Project {
+	p.messages ??= [];
+	// Backfill repos for projects saved under the old single-folder model.
+	if (!Array.isArray(p.repos) || p.repos.length === 0) {
+		p.repos = p.cwd ? [{ id: `r-${p.id}`, label: basename(p.cwd), path: p.cwd }] : [];
+	}
+	p.cwd = p.repos[0]?.path;
+	p.plan = [];
+	p.todos = []; // HUD state isn't meaningful across restarts — start clean
+	p.subagents = [];
+	p.toolFeed = [];
+	if (p.status === "working" || p.status === "waiting") p.status = "idle";
+	p.activity = undefined;
+	p.attention = undefined;
+	p.pendingQuestion = undefined;
+	p.live = false;
+	return p;
+}
+
 /**
- * Loads saved projects/assistants from disk and auto-saves (debounced) on every change.
- * Persisting each assistant's `sessionId` is what keeps Claude context across restarts.
+ * Loads saved projects from disk and auto-saves (debounced) on every change. Persisting each
+ * project's `sessionId` is what keeps Claude context across restarts.
  */
 export async function initStore(): Promise<void> {
 	if (!isTauri) return;
@@ -393,44 +506,33 @@ export async function initStore(): Promise<void> {
 	store = await load("cockpit.json");
 
 	const saved = await store.get<Project[]>("projects");
-	if (Array.isArray(saved) && saved.length > 0) {
-		cockpit.projects = saved;
-		cockpit.projectIndex = 0;
-		cockpit.assistantIndex = 0;
+	if (Array.isArray(saved)) {
+		// Migration: the old model nested per-repo "assistants" under a project. Those are
+		// structurally incompatible with the one-session-per-project model — drop them once.
+		cockpit.projects = saved
+			.filter((p) => p && typeof p === "object" && !("assistants" in p) && Array.isArray(p.messages))
+			.map((p) => normalizeProject(p));
 	}
+	cockpit.projectIndex = 0;
 
 	const savedSettings = await store.get<typeof cockpit.settings>("settings");
 	if (savedSettings) Object.assign(cockpit.settings, savedSettings);
 
-	// One-time cleanup: drop the original demo projects (Grita Bingo / Blogfolio / VPS Infra),
-	// keeping anything you created. Runs once, then never touches your projects again.
-	if (!(await store.get<boolean>("seedCleared"))) {
-		cockpit.projects = cockpit.projects.filter((p) => !LEGACY_SEED_IDS.includes(p.id));
-		cockpit.projectIndex = 0;
-		cockpit.assistantIndex = 0;
-		await store.set("seedCleared", true);
-	}
-
-	// No turn or session is running right after launch, so clear stale runtime state.
-	for (const p of cockpit.projects) {
-		for (const a of p.assistants) {
-			if (a.status === "working") a.status = "idle";
-			a.activity = undefined;
-			a.attention = undefined;
-			a.live = false;
-		}
-	}
+	const savedWidth = await store.get<number>("chatWidth");
+	if (typeof savedWidth === "number") setChatWidth(savedWidth);
 
 	// Deep-read projects + settings so this effect re-runs on any change, then save (debounced).
 	$effect.root(() => {
 		$effect(() => {
 			const projectsSnap = $state.snapshot(cockpit.projects);
 			const settingsSnap = $state.snapshot(cockpit.settings);
+			const widthSnap = cockpit.chatWidth;
 			clearTimeout(saveTimer);
 			saveTimer = setTimeout(() => {
 				void store
 					?.set("projects", projectsSnap)
 					.then(() => store?.set("settings", settingsSnap))
+					.then(() => store?.set("chatWidth", widthSnap))
 					.then(() => store?.save());
 			}, 600);
 		});

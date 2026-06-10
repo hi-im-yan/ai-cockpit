@@ -21,7 +21,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::Mutex;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -36,26 +36,79 @@ struct Session {
 	stdin: ChildStdin,
 }
 
+/// A pasted image attached to a user message (sent inline as a base64 content block).
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageInput {
+	media_type: String,
+	data: String,
+}
+
 /// All running assistant sessions, keyed by `"<projectId>::<assistantId>"`.
 #[derive(Default)]
 pub struct AgentState {
 	sessions: Mutex<HashMap<String, Session>>,
 }
 
-/// A chat event streamed to the frontend, tagged with the assistant it belongs to.
-#[derive(Clone, Serialize)]
+/// An event streamed to the frontend, tagged with the project session it belongs to.
+///
+/// Simple kinds (`session`/`assistant`/`done`/…) carry only `text`; structured kinds
+/// (`tool`/`tool_result`/`subagent`/`todo`) also carry the tool name, ids and JSON payload
+/// that drive the HUD. `parent_id` is the spawning `Agent` tool-use id when an event happened
+/// *inside* a subagent (absent for the main session).
+#[derive(Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct AgentEvent {
 	key: String,
 	kind: String,
+	#[serde(skip_serializing_if = "Option::is_none")]
 	text: Option<String>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	name: Option<String>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	tool_id: Option<String>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	parent_id: Option<String>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	data: Option<Value>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	is_error: Option<bool>,
 }
 
+fn emit_event(app: &AppHandle, ev: AgentEvent) {
+	let _ = app.emit("agent://event", ev);
+}
+
+/// Emits a simple text-only event (`session`/`assistant`/`done`/`error`/`permission`/…).
 fn emit(app: &AppHandle, key: &str, kind: &str, text: Option<String>) {
-	let _ = app.emit("agent://event", AgentEvent { key: key.to_string(), kind: kind.to_string(), text });
+	emit_event(app, AgentEvent { key: key.to_string(), kind: kind.to_string(), text, ..Default::default() });
 }
 
-/// Parses one stream-json line into a chat event.
+/// Flattens a `tool_result` block's `content` (string, or array of text parts) into one string.
+fn result_text(content: &Value) -> Option<String> {
+	match content {
+		Value::String(s) => Some(s.clone()),
+		Value::Array(arr) => Some(
+			arr.iter()
+				.filter_map(|item| item.get("text").and_then(Value::as_str))
+				.collect::<Vec<_>>()
+				.join(""),
+		),
+		Value::Null => None,
+		other => Some(other.to_string()),
+	}
+}
+
+/// Parses one stream-json line into chat + HUD events.
+///
+/// Tool calls, subagents, todos and results are read from the **complete** `assistant`/`user`
+/// messages (which carry full inputs, ids and `parent_tool_use_id`) rather than from the
+/// token-level `stream_event`s — those only give a bare name with no attribution. Streaming
+/// text deltas still drive the typewriter, but only for the main session (null parent), so a
+/// subagent's inner chatter never leaks into the main conversation.
 fn handle_event(app: &AppHandle, key: &str, v: &Value) {
+	// Spawning Agent tool-use id when this line belongs to a subagent's inner work.
+	let parent = v.get("parent_tool_use_id").and_then(Value::as_str);
 	match v.get("type").and_then(Value::as_str) {
 		Some("system") => {
 			if v.get("subtype").and_then(Value::as_str) == Some("init") {
@@ -64,24 +117,65 @@ fn handle_event(app: &AppHandle, key: &str, v: &Value) {
 				}
 			}
 		}
-		// Streaming deltas: text token-by-token; a tool_use block starting = live activity.
+		// Token-level deltas: drive the main session's typewriter only.
 		Some("stream_event") => {
-			if let Some(ev) = v.get("event") {
-				match ev.get("type").and_then(Value::as_str) {
-					Some("content_block_delta") => {
-						if ev.pointer("/delta/type").and_then(Value::as_str) == Some("text_delta") {
-							if let Some(text) = ev.pointer("/delta/text").and_then(Value::as_str) {
-								emit(app, key, "assistant", Some(text.to_string()));
-							}
+			if parent.is_none() {
+				if let Some(ev) = v.get("event") {
+					if ev.get("type").and_then(Value::as_str) == Some("content_block_delta")
+						&& ev.pointer("/delta/type").and_then(Value::as_str) == Some("text_delta")
+					{
+						if let Some(text) = ev.pointer("/delta/text").and_then(Value::as_str) {
+							emit(app, key, "assistant", Some(text.to_string()));
 						}
 					}
-					Some("content_block_start") => {
-						if ev.pointer("/content_block/type").and_then(Value::as_str) == Some("tool_use") {
-							let name = ev.pointer("/content_block/name").and_then(Value::as_str).unwrap_or("tool");
-							emit(app, key, "tool", Some(name.to_string()));
-						}
+				}
+			}
+		}
+		// Complete assistant message: surface its tool calls (main session OR a subagent's).
+		Some("assistant") => {
+			if let Some(content) = v.pointer("/message/content").and_then(Value::as_array) {
+				for block in content {
+					if block.get("type").and_then(Value::as_str) != Some("tool_use") {
+						continue;
 					}
-					_ => {}
+					let name = block.get("name").and_then(Value::as_str).unwrap_or("tool");
+					let id = block.get("id").and_then(Value::as_str).map(str::to_string);
+					let input = block.get("input").cloned();
+					// `Agent` (older: `Task`) = a subagent spawn → its own card.
+					// `TaskCreate`/`TaskUpdate` (older: `TodoWrite`) = the live todo list.
+					let kind = match name {
+						"Agent" | "Task" => "subagent",
+						"TaskCreate" | "TaskUpdate" => "todo",
+						_ => "tool",
+					};
+					emit_event(app, AgentEvent {
+						key: key.to_string(),
+						kind: kind.to_string(),
+						name: Some(name.to_string()),
+						tool_id: id,
+						parent_id: parent.map(str::to_string),
+						data: input,
+						..Default::default()
+					});
+				}
+			}
+		}
+		// Complete user message: surface any tool results (resolves feed entries + subagent cards).
+		Some("user") => {
+			if let Some(content) = v.pointer("/message/content").and_then(Value::as_array) {
+				for block in content {
+					if block.get("type").and_then(Value::as_str) != Some("tool_result") {
+						continue;
+					}
+					emit_event(app, AgentEvent {
+						key: key.to_string(),
+						kind: "tool_result".to_string(),
+						text: block.get("content").and_then(result_text),
+						tool_id: block.get("tool_use_id").and_then(Value::as_str).map(str::to_string),
+						parent_id: parent.map(str::to_string),
+						is_error: block.get("is_error").and_then(Value::as_bool),
+						..Default::default()
+					});
 				}
 			}
 		}
@@ -114,6 +208,7 @@ fn spawn_session(
 	app: &AppHandle,
 	key: &str,
 	cwd: Option<&str>,
+	add_dirs: &[String],
 	skip_permissions: bool,
 	resume: Option<&str>,
 ) -> Result<Session, String> {
@@ -135,6 +230,11 @@ fn spawn_session(
 		.arg("--output-format").arg("stream-json")
 		.arg("--verbose")
 		.arg("--include-partial-messages");
+
+	// Secondary repos: grant the one session access beyond its cwd so it spans front/back/cron.
+	for dir in add_dirs {
+		cmd.arg("--add-dir").arg(dir);
+	}
 
 	// Wire our in-process `ask_user` MCP tool so the assistant can pop an interactive picker
 	// instead of the built-in AskUserQuestion (which auto-denies in headless mode). We allow
@@ -197,18 +297,39 @@ pub fn agent_send(
 	state: State<AgentState>,
 	key: String,
 	cwd: Option<String>,
+	add_dirs: Option<Vec<String>>,
 	message: String,
+	images: Option<Vec<ImageInput>>,
 	skip_permissions: Option<bool>,
 	resume: Option<String>,
 ) -> Result<(), String> {
 	let mut sessions = state.sessions.lock().unwrap();
 
 	if !sessions.contains_key(&key) {
-		let session = spawn_session(&app, &key, cwd.as_deref(), skip_permissions.unwrap_or(false), resume.as_deref())?;
+		let add_dirs = add_dirs.unwrap_or_default();
+		let session = spawn_session(&app, &key, cwd.as_deref(), &add_dirs, skip_permissions.unwrap_or(false), resume.as_deref())?;
 		sessions.insert(key.clone(), session);
 	}
 
-	let line = format!("{}\n", json!({ "type": "user", "message": { "role": "user", "content": message } }));
+	// Plain text → a string content; with pasted images → an array of text + image blocks
+	// (base64), which headless Claude accepts over stream-json.
+	let images = images.unwrap_or_default();
+	let content = if images.is_empty() {
+		Value::String(message.clone())
+	} else {
+		let mut blocks: Vec<Value> = Vec::new();
+		if !message.is_empty() {
+			blocks.push(json!({ "type": "text", "text": message }));
+		}
+		for img in &images {
+			blocks.push(json!({
+				"type": "image",
+				"source": { "type": "base64", "media_type": img.media_type, "data": img.data }
+			}));
+		}
+		Value::Array(blocks)
+	};
+	let line = format!("{}\n", json!({ "type": "user", "message": { "role": "user", "content": content } }));
 	if let Some(session) = sessions.get_mut(&key) {
 		session.stdin.write_all(line.as_bytes()).map_err(|e| e.to_string())?;
 		session.stdin.flush().map_err(|e| e.to_string())?;

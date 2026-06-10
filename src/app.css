@@ -24,6 +24,17 @@
 	--code-ink: #5a4bb0;
 	--input-bg: #f2eefb;
 
+	/* HUD ("mission control") — a dark cockpit surface kept constant across skins, by design:
+	   the stage is meant to read like an instrument panel regardless of the chat theme. */
+	--rail-soft: #14111d;
+	--hud-panel: #1e1a29;
+	--hud-card2: #241f33;
+	--hud-line:  #2c2640;
+	--hud-chip:  #2c2640;
+	--hud-ink:   #e8e3f7;
+	--hud-soft:  #b6aecd;
+	--hud-dim:   #8b84a6;
+
 	/* Status / notification dot + pill colours. Saturated, semantic per status so state
 	   reads from the dot alone (not the row tint); overridden per data-theme below. */
 	--st-online:  #059669;
@@ -104,19 +115,133 @@ body {
 	-webkit-font-smoothing: antialiased;
 	overflow: hidden;
 }
-button { font-family: inherit; }
+/* Every button reads as clickable: pointer cursor + a universal hover tint + press feedback.
+   The hover uses a translucent inset overlay (not a background swap) so it stacks on top of
+   each button's own colours and shows up on light, dark, solid and transparent buttons alike.
+   On WebKitGTK buttons default to the arrow cursor, so the pointer is essential here. */
+button { font-family: inherit; cursor: pointer; transition: box-shadow .12s ease, filter .12s ease, transform .06s ease; }
+button:disabled { cursor: default; }
+button:not(:disabled):hover { box-shadow: inset 0 0 0 100vmax rgba(128, 128, 128, .11); }
+button:not(:disabled):active { transform: translateY(1px); }
 
-/* App layout (Layout 2): top bar full width, sidebar left, chat right.
-   Kept global (not in the route's scoped <style>) so it always loads. */
+/* App layout: top bar full width; the chat conversation is a left column and the HUD stage
+   (agent tree + todos + tool feed) fills the rest. Kept global so it always loads. */
 .app {
 	display: grid;
 	height: 100vh;
 	grid-template-rows: 56px 1fr;
-	grid-template-columns: 250px 1fr;
+	/* Chat column width is user-draggable (see ChatResizer) and persisted. */
+	grid-template-columns: var(--chat-w, 380px) 1fr;
 	grid-template-areas:
 		"top top"
-		"side chat";
+		"chat stage";
 }
+
+/* Folder picker — global (like the settings panel) so its overlay reliably positions over
+   everything; component-scoped styles weren't applying to this conditionally-mounted overlay. */
+.fp-overlay { position: fixed; inset: 0; z-index: 210; background: rgba(15,12,22,.5); display: flex; align-items: center; justify-content: center; }
+.fp-picker {
+	width: 560px; max-width: 92vw; height: 540px; max-height: 88vh;
+	background: var(--chat); border-radius: 16px; overflow: hidden;
+	box-shadow: 0 30px 90px rgba(0,0,0,.45); display: flex; flex-direction: column; font-family: var(--font);
+}
+.fp-ph { padding: 18px 20px 12px; border-bottom: 1px solid var(--hairline); }
+.fp-ph h3 { font-size: 16px; font-weight: 800; color: var(--ink); }
+.fp-crumb {
+	margin-top: 6px; font-family: var(--mono); font-size: 12px; color: var(--muted);
+	white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left;
+}
+.fp-bar { padding: 10px 16px; }
+.fp-up {
+	font-family: inherit; font-size: 12.5px; font-weight: 700; color: var(--accent);
+	background: var(--input-bg); border: 1px solid var(--ai-border); border-radius: 9px; padding: 7px 12px; cursor: pointer;
+}
+.fp-up:disabled { opacity: .4; cursor: default; }
+.fp-list { flex: 1; overflow-y: auto; padding: 0 12px; }
+.fp-row {
+	display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+	padding: 10px 12px; border: none; background: transparent; border-radius: 10px;
+	font-family: inherit; font-size: 13.5px; font-weight: 600; color: var(--ink); cursor: pointer;
+}
+.fp-row:hover { background: var(--input-bg); }
+.fp-ico { font-size: 15px; }
+.fp-chev { margin-left: auto; color: var(--muted); font-size: 16px; }
+.fp-muted { color: var(--muted); font-size: 13px; padding: 16px 14px; }
+.fp-foot {
+	padding: 13px 18px; border-top: 1px solid var(--hairline);
+	display: flex; align-items: center; justify-content: space-between; gap: 14px;
+}
+.fp-hint { font-size: 11.5px; color: var(--muted); font-weight: 500; max-width: 230px; line-height: 1.4; }
+.fp-actions { display: flex; gap: 8px; }
+.fp-ghost {
+	background: transparent; border: 1px solid var(--ai-border); color: var(--muted);
+	font-weight: 700; font-size: 13px; padding: 9px 14px; border-radius: 10px; cursor: pointer;
+}
+.fp-primary {
+	background: var(--accent); border: none; color: #fff;
+	font-weight: 700; font-size: 13px; padding: 9px 16px; border-radius: 10px; cursor: pointer;
+}
+.fp-primary:disabled { opacity: .5; cursor: default; }
+
+/* New-project modal — global (conditional overlays don't reliably get scoped styles here). */
+.np-overlay { position: fixed; inset: 0; z-index: 205; background: rgba(15,12,22,.5); display: flex; align-items: center; justify-content: center; }
+.np-modal {
+	width: 540px; max-width: 92vw; max-height: 86vh; background: var(--chat); border-radius: 16px;
+	box-shadow: 0 30px 90px rgba(0,0,0,.45); display: flex; flex-direction: column; font-family: var(--font);
+}
+.np-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--hairline); }
+.np-head h3 { font-size: 16px; font-weight: 800; color: var(--ink); }
+.np-x { border: none; background: transparent; color: var(--muted); font-size: 14px; cursor: pointer; width: 30px; height: 30px; border-radius: 8px; }
+.np-x:hover { background: var(--input-bg); color: var(--ink); }
+.np-body { padding: 18px 20px; display: flex; flex-direction: column; gap: 18px; overflow-y: auto; }
+.np-field { display: flex; flex-direction: column; gap: 9px; }
+.np-label { font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+.np-name {
+	width: 100%; font-family: inherit; font-size: 14px; padding: 11px 13px; color: var(--ink);
+	background: var(--input-bg); border: 1px solid var(--ai-border); border-radius: 11px; outline: none;
+}
+.np-name:focus { border-color: var(--accent); }
+.np-empty { font-size: 12.5px; color: var(--muted); line-height: 1.5; padding: 4px 2px; }
+.np-repos { display: flex; flex-direction: column; gap: 7px; }
+.np-repo {
+	display: flex; align-items: center; gap: 10px; padding: 9px 11px;
+	background: var(--input-bg); border: 1px solid var(--ai-border); border-radius: 11px;
+}
+.np-ico { font-size: 16px; flex: 0 0 auto; }
+.np-rmeta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.np-rlabel {
+	font-family: inherit; font-size: 13px; font-weight: 700; color: var(--ink);
+	background: transparent; border: 1px solid transparent; border-radius: 6px; padding: 1px 5px; outline: none; width: 100%;
+}
+.np-rlabel:hover { border-color: var(--ai-border); }
+.np-rlabel:focus { border-color: var(--accent); background: var(--chat); }
+.np-rpath {
+	font-family: var(--mono); font-size: 11px; color: var(--muted); padding: 0 5px;
+	white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left;
+}
+.np-primary-badge {
+	font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: #fff;
+	background: var(--accent); border-radius: 6px; padding: 3px 7px; flex: 0 0 auto;
+}
+.np-mini {
+	font-family: inherit; font-size: 11px; font-weight: 700; color: var(--accent);
+	background: transparent; border: 1px solid var(--ai-border); border-radius: 6px; padding: 3px 8px; cursor: pointer; flex: 0 0 auto;
+}
+.np-mini:hover { background: var(--code-bg); }
+.np-remove { border: none; background: transparent; color: var(--muted); font-size: 13px; cursor: pointer; width: 26px; height: 26px; border-radius: 7px; flex: 0 0 auto; }
+.np-remove:hover { color: #fff; background: rgba(255,77,106,.5); }
+.np-add {
+	align-self: flex-start; font-family: inherit; font-size: 12.5px; font-weight: 700; color: var(--accent);
+	background: transparent; border: 1.5px dashed var(--ai-border); border-radius: 10px; padding: 9px 14px; cursor: pointer;
+}
+.np-add:hover { background: var(--code-bg); border-color: var(--accent); }
+.np-foot { padding: 14px 20px; border-top: 1px solid var(--hairline); display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.np-hint { font-size: 11.5px; color: var(--muted); font-weight: 500; line-height: 1.4; max-width: 260px; }
+.np-hint code { font-family: var(--mono); font-size: 10.5px; background: var(--code-bg); color: var(--code-ink); padding: 1px 5px; border-radius: 5px; }
+.np-actions { display: flex; gap: 8px; flex: 0 0 auto; }
+.np-ghost { background: transparent; border: 1px solid var(--ai-border); color: var(--muted); font-weight: 700; font-size: 13px; padding: 9px 14px; border-radius: 10px; cursor: pointer; }
+.np-create { background: var(--accent); border: none; color: #fff; font-weight: 700; font-size: 13px; padding: 9px 16px; border-radius: 10px; cursor: pointer; }
+.np-create:disabled { opacity: .5; cursor: default; }
 
 /* Settings panel — global so the dev server can't drop its CSS (it's lazily mounted). */
 .settings-overlay { position: fixed; inset: 0; z-index: 200; background: rgba(15,12,22,.5); display: flex; align-items: center; justify-content: center; }
