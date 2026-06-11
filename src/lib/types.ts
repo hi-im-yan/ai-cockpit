@@ -19,25 +19,6 @@ export interface Message {
 	images?: ImageAttachment[];
 }
 
-/** One task row from a feature's `INDEX.md` (the file-based `.tasks/` workflow). */
-export interface PlanTask {
-	id: string;
-	title: string;
-	/** Raw status from the INDEX table (e.g. "ready", "blocked", "done"). */
-	status: string;
-	blockedBy?: string;
-}
-
-/** An active feature's plan, read from `.tasks/active/<feature>/INDEX.md`. */
-export interface FeaturePlan {
-	slug: string;
-	feature: string;
-	branch?: string;
-	/** Repo (folder name) this feature lives in. */
-	repo: string;
-	tasks: PlanTask[];
-}
-
 /** One item in the live todo list (Claude's `TaskCreate`/`TaskUpdate`). */
 export interface Todo {
 	/** The task id Claude assigns (`taskId` in TaskUpdate). */
@@ -77,6 +58,8 @@ export interface Subagent {
 	status: "running" | "done" | "error";
 	/** Inner tool calls the subagent made, in order. */
 	steps: ToolEvent[];
+	/** The subagent's own todo list (`TaskCreate`/`TaskUpdate` it made, tagged with its id). */
+	todos: Todo[];
 	/** Final result text once it returns. */
 	result?: string;
 	/** 1-based spawn order, shown as a short "A{index}" tag to cross-reference the feed. */
@@ -161,9 +144,7 @@ export interface Project {
 	/** Transient: true while a backend Claude session is running. Set on first message, cleared on exit. */
 	live?: boolean;
 
-	/** HUD: live plan read from the repos' `.tasks/active/` INDEX files (file-based workflow). */
-	plan: FeaturePlan[];
-	/** HUD: live todo list (Claude's built-in TaskCreate; fallback when there's no file plan). */
+	/** HUD: the main session's own todo list (Claude's `TaskCreate`; subagents keep theirs). */
 	todos: Todo[];
 	/** HUD: subagents spawned this/last turn. */
 	subagents: Subagent[];

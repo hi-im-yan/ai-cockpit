@@ -1,65 +1,58 @@
 <script lang="ts">
-	import type { Project } from "$lib/types";
+	import type { Project, Todo } from "$lib/types";
 
 	let { project }: { project: Project } = $props();
 
-	type Norm = "pending" | "in_progress" | "completed" | "blocked";
-	/** Maps a free-text task status (from INDEX.md or TaskCreate) to a display state. */
-	function norm(status: string): Norm {
-		const s = status.toLowerCase();
-		if (/(done|complete|merged|finished|closed|✓|✅)/.test(s)) return "completed";
-		if (/(progress|doing|wip|active|review)/.test(s)) return "in_progress";
-		if (/block/.test(s)) return "blocked";
-		return "pending";
+	/** A todo list attributed to one agent (the main session, or a subagent). */
+	interface Group {
+		key: string;
+		label: string;
+		/** Agent accent colour, so a Plan group ties back to its Agent card + feed rows. */
+		color: string;
+		todos: Todo[];
 	}
 
-	const hasPlan = $derived(project.plan?.length > 0);
-	const allTasks = $derived((project.plan ?? []).flatMap((f) => f.tasks));
-	const planDone = $derived(allTasks.filter((t) => norm(t.status) === "completed").length);
+	// Main session first, then any subagent that has actually planned. Empty lists are hidden so
+	// the panel only shows agents that own work — lightweight subagents simply don't appear.
+	const groups = $derived<Group[]>(
+		[
+			{ key: "main", label: `${project.emoji} Main session`, color: "var(--accent)", todos: project.todos },
+			...project.subagents.map((s) => ({ key: s.id, label: s.description, color: s.color, todos: s.todos })),
+		].filter((g) => g.todos.length > 0),
+	);
 
-	const todoDone = $derived(project.todos.filter((t) => t.status === "completed").length);
+	const all = $derived(groups.flatMap((g) => g.todos));
+	const allDone = $derived(all.filter((t) => t.status === "completed").length);
+	const groupDone = (g: Group) => g.todos.filter((t) => t.status === "completed").length;
 </script>
 
 <div class="panel">
 	<header class="phead">
 		<span class="title">Plan</span>
-		{#if hasPlan}
-			<span class="count">{planDone}/{allTasks.length}</span>
-		{:else if project.todos.length > 0}
-			<span class="count">{todoDone}/{project.todos.length}</span>
-		{/if}
+		{#if all.length > 0}<span class="count">{allDone}/{all.length}</span>{/if}
 	</header>
 
 	<div class="scroll">
-		{#if hasPlan}
-			{#each project.plan as f (f.slug)}
-				<div class="feat">
-					<div class="feat-head">
-						<span class="feat-name">{f.feature}</span>
-						{#if project.repos.length > 1}<span class="feat-repo">{f.repo}</span>{/if}
+		{#if groups.length > 0}
+			{#each groups as g (g.key)}
+				<div class="grp" style="--gc: {g.color}">
+					<div class="grp-head">
+						<span class="gdot"></span>
+						<span class="grp-name">{g.label}</span>
+						<span class="grp-count">{groupDone(g)}/{g.todos.length}</span>
 					</div>
 					<ul class="todos">
-						{#each f.tasks as t (t.id)}
-							<li class={norm(t.status)}>
+						{#each g.todos as t (t.id)}
+							<li class={t.status}>
 								<span class="mark"></span>
-								<span class="tx"><span class="tid">{t.id}</span> {t.title}</span>
+								<span class="tx">{t.subject}</span>
 							</li>
 						{/each}
 					</ul>
 				</div>
 			{/each}
-		{:else if project.todos.length > 0}
-			<!-- Fallback: Claude's built-in TaskCreate list (projects that don't use .tasks files). -->
-			<ul class="todos">
-				{#each project.todos as t (t.id)}
-					<li class={t.status}>
-						<span class="mark"></span>
-						<span class="tx">{t.subject}</span>
-					</li>
-				{/each}
-			</ul>
 		{:else}
-			<div class="hint">No active plan. Tasks appear here from each repo's <code>.tasks/active/&lt;feature&gt;/INDEX.md</code> (and tick off as their status changes) — or from Claude's built-in task list if a project uses that instead.</div>
+			<div class="hint">No tasks yet. When Claude or a subagent plans with <code>TaskCreate</code>, their checklists appear here — grouped by the agent that owns them.</div>
 		{/if}
 	</div>
 </div>
@@ -83,23 +76,22 @@
 		color: var(--hud-ink, #e8e3f7); padding: 1px 5px; border-radius: 5px;
 	}
 
-	.feat { margin-bottom: 12px; }
-	.feat-head { display: flex; align-items: baseline; gap: 8px; margin: 2px 2px 6px; }
-	.feat-name {
-		font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em;
-		color: var(--hud-soft, #b6aecd);
+	/* One agent's group. The left dot + name use the agent's accent (--gc) so the group reads
+	   as the same agent shown in the Agents tree and the activity feed. */
+	.grp { margin-bottom: 12px; }
+	.grp-head { display: flex; align-items: center; gap: 8px; margin: 2px 2px 7px; }
+	.gdot { width: 8px; height: 8px; border-radius: 50%; background: var(--gc); flex: 0 0 auto; }
+	.grp-name {
+		flex: 1; min-width: 0; font-size: 11.5px; font-weight: 800; color: var(--hud-soft, #b6aecd);
+		white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 	}
-	.feat-repo {
-		font-size: 9.5px; font-weight: 700; color: var(--hud-dim, #8b84a6);
-		background: var(--hud-chip, #2c2640); border-radius: 5px; padding: 1px 6px;
-	}
+	.grp-count { font-size: 10px; font-weight: 700; color: var(--hud-dim, #8b84a6); flex: 0 0 auto; }
 
 	.todos { list-style: none; display: flex; flex-direction: column; gap: 3px; }
 	.todos li {
 		display: flex; align-items: flex-start; gap: 9px; padding: 6px 8px; border-radius: 8px;
 		font-size: 12.5px; line-height: 1.45; color: var(--hud-soft, #b6aecd);
 	}
-	.tid { font-family: var(--mono); font-size: 10.5px; color: var(--hud-dim, #8b84a6); margin-right: 2px; }
 	.mark {
 		width: 14px; height: 14px; border-radius: 50%; flex: 0 0 auto; margin-top: 1px;
 		border: 2px solid var(--hud-dim, #8b84a6); position: relative;

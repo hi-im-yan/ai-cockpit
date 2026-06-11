@@ -1,6 +1,6 @@
 import { seedProjects } from "./data";
 import { toolVerb, SUBAGENT_COLORS } from "./types";
-import type { AgentEventPayload, FeaturePlan, ImageAttachment, PendingQuestion, Project, Repo, Subagent, ToolEvent } from "./types";
+import type { AgentEventPayload, ImageAttachment, PendingQuestion, Project, Repo, Subagent, ToolEvent } from "./types";
 import type { Store } from "@tauri-apps/plugin-store";
 
 /**
@@ -31,29 +31,7 @@ export function setChatWidth(px: number): void {
 export function selectProject(index: number): void {
 	cockpit.projectIndex = index;
 	const p = cockpit.projects[index];
-	if (p) {
-		p.attention = undefined;
-		void refreshPlan(p); // pull its file-based plan right away
-	}
-}
-
-/**
- * Reads the project's file-based plan from each repo's `.tasks/active/<feature>/INDEX.md` and
- * stores it on `project.plan`. Polled (and called on select/turn-end) so the Plan ticks live.
- */
-export async function refreshPlan(project: Project): Promise<void> {
-	if (!isTauri || !project) return;
-	const dirs = (project.repos ?? []).map((r) => r.path);
-	if (dirs.length === 0) {
-		project.plan = [];
-		return;
-	}
-	try {
-		const { invoke } = await import("@tauri-apps/api/core");
-		project.plan = await invoke<FeaturePlan[]>("read_task_plan", { dirs });
-	} catch {
-		/* leave the last-known plan in place on a transient read error */
-	}
+	if (p) p.attention = undefined;
 }
 
 /** True if the given session key (a project id) is the one currently on screen. */
@@ -113,7 +91,6 @@ export function createProject(name: string, repos: Repo[]): void {
 		preview: repos.length === 1 ? `📂 ${repos[0].label}` : `📂 ${repos.length} repos`,
 		messages: [],
 		status: "idle",
-		plan: [],
 		todos: [],
 		subagents: [],
 		toolFeed: [],
@@ -290,20 +267,30 @@ function findToolEvent(project: Project, id?: string): ToolEvent | undefined {
 	return project.toolFeed.find((t) => t.id === id);
 }
 
-/** Applies a `TaskCreate`/`TaskUpdate` to the project's todo list (cumulative; ids are Claude's). */
-function applyTodo(project: Project, name?: string, data?: unknown): void {
+/**
+ * Applies a `TaskCreate`/`TaskUpdate` to the todo list of whoever owns it: a subagent (when the
+ * event arrived tagged with that subagent's `parentId`) or the main session. Cumulative.
+ */
+function applyTodo(project: Project, name?: string, data?: unknown, parentId?: string): void {
 	const input = (data ?? {}) as { taskId?: string | number; subject?: string; description?: string; status?: string };
+	const owner = parentId ? project.subagents.find((s) => s.id === parentId) : undefined;
+	const list = owner ? owner.todos : project.todos;
 	if (name === "TaskCreate") {
-		// TaskCreate carries no id — Claude assigns sequential global ids (1,2,3…); mirror that.
-		const id = input.taskId != null ? String(input.taskId) : String(project.todos.length + 1);
-		project.todos.push({
+		// TaskCreate carries no id — Claude assigns sequential ids (1,2,3…); mirror that per-list.
+		const id = input.taskId != null ? String(input.taskId) : String(list.length + 1);
+		list.push({
 			id,
 			subject: input.subject ?? input.description ?? "task",
 			description: input.description,
 			status: "pending",
 		});
 	} else if (name === "TaskUpdate") {
-		const t = project.todos.find((x) => x.id === String(input.taskId));
+		// Prefer the owner's list, but fall back to a global scan: task-id spaces may overlap
+		// across lists, and a stray update should still land rather than silently drop.
+		const wanted = String(input.taskId);
+		const t = list.find((x) => x.id === wanted)
+			?? project.todos.find((x) => x.id === wanted)
+			?? project.subagents.flatMap((s) => s.todos).find((x) => x.id === wanted);
 		if (t && input.status) t.status = input.status as typeof t.status;
 	}
 }
@@ -312,13 +299,6 @@ function applyTodo(project: Project, name?: string, data?: unknown): void {
 export async function initAgent(): Promise<void> {
 	if (!isTauri) return;
 	const { listen } = await import("@tauri-apps/api/event");
-
-	// Poll the on-screen project's file-based plan so it ticks in near-real-time as Claude
-	// writes/updates its `.tasks/` INDEX files. Cheap (a few small file reads).
-	setInterval(() => {
-		const p = cockpit.projects[cockpit.projectIndex];
-		if (p) void refreshPlan(p);
-	}, 3000);
 
 	// Claude asked a multiple-choice question (via the ask_user MCP tool): show a picker.
 	await listen<PendingQuestion & { key: string }>("agent://question", (event) => {
@@ -358,6 +338,7 @@ export async function initAgent(): Promise<void> {
 					prompt: input.prompt ?? "",
 					status: "running",
 					steps: [],
+					todos: [],
 					index,
 					color: SUBAGENT_COLORS[(index - 1) % SUBAGENT_COLORS.length],
 				};
@@ -368,7 +349,7 @@ export async function initAgent(): Promise<void> {
 			}
 
 			case "todo":
-				applyTodo(project, p.name, p.data);
+				applyTodo(project, p.name, p.data, p.parentId);
 				project.status = "working";
 				project.activity = toolVerb(p.name ?? "TaskCreate");
 				break;
@@ -443,7 +424,6 @@ export async function initAgent(): Promise<void> {
 				for (const s of project.subagents) if (s.status === "running") s.status = "done";
 				project.status = "idle";
 				project.activity = undefined;
-				void refreshPlan(project); // catch the final task-file state immediately
 				if (!isViewing(p.key) && project.attention !== "permission") project.attention = "reply";
 				break;
 
@@ -484,7 +464,6 @@ function normalizeProject(p: Project): Project {
 		p.repos = p.cwd ? [{ id: `r-${p.id}`, label: basename(p.cwd), path: p.cwd }] : [];
 	}
 	p.cwd = p.repos[0]?.path;
-	p.plan = [];
 	p.todos = []; // HUD state isn't meaningful across restarts — start clean
 	p.subagents = [];
 	p.toolFeed = [];

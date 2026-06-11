@@ -22,7 +22,6 @@ pub fn run() {
 			mcp::agent_answer,
 			files::home_dir,
 			files::list_dirs,
-			files::read_task_plan,
 			pty::pty_open,
 			pty::pty_write,
 			pty::pty_resize,
