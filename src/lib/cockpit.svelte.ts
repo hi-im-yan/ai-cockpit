@@ -99,6 +99,40 @@ export function createProject(name: string, repos: Repo[]): void {
 	cockpit.newProjectOpen = false;
 }
 
+/**
+ * Creates a repo-less "blank" project — a prompt to start from zero. The session runs in a clean,
+ * isolated scratch dir (`~/.ai-cockpit/scratch/<id>`, made by the Rust `scratch_dir` command) so
+ * it never inherits the app's own directory. No repos, no `--add-dir`.
+ */
+export async function createBlankProject(name: string): Promise<void> {
+	const id = `proj-${Date.now()}`;
+	let cwd: string | undefined;
+	if (isTauri) {
+		try {
+			const { invoke } = await import("@tauri-apps/api/core");
+			cwd = await invoke<string>("scratch_dir", { id });
+		} catch {
+			/* fall back to no cwd — the session inherits the app dir; better than failing to create */
+		}
+	}
+	cockpit.projects.push({
+		id,
+		name: name.trim() || "Scratch",
+		color: PROJECT_COLORS[cockpit.projects.length % PROJECT_COLORS.length],
+		emoji: "✨",
+		repos: [],
+		cwd,
+		preview: "✨ Scratch",
+		messages: [],
+		status: "idle",
+		todos: [],
+		subagents: [],
+		toolFeed: [],
+	});
+	cockpit.projectIndex = cockpit.projects.length - 1;
+	cockpit.newProjectOpen = false;
+}
+
 const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 /** Best-effort: stops a session's Claude process + tmux/PTY in the backend. */
@@ -463,7 +497,7 @@ function normalizeProject(p: Project): Project {
 	if (!Array.isArray(p.repos) || p.repos.length === 0) {
 		p.repos = p.cwd ? [{ id: `r-${p.id}`, label: basename(p.cwd), path: p.cwd }] : [];
 	}
-	p.cwd = p.repos[0]?.path;
+	p.cwd = p.repos[0]?.path ?? p.cwd; // keep the scratch cwd for repo-less "blank" projects
 	p.todos = []; // HUD state isn't meaningful across restarts — start clean
 	p.subagents = [];
 	p.toolFeed = [];

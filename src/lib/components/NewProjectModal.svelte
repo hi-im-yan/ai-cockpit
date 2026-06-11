@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { cockpit, closeNewProject, requestFolder, createProject } from "$lib/cockpit.svelte";
+	import { cockpit, closeNewProject, requestFolder, createProject, createBlankProject } from "$lib/cockpit.svelte";
 	import type { Repo } from "$lib/types";
 
 	let name = $state("");
@@ -39,6 +39,13 @@
 		repos = [];
 	}
 
+	/** Create a repo-less scratch session — no folders, just a prompt to start from zero. */
+	async function createBlank() {
+		await createBlankProject(name);
+		name = "";
+		repos = [];
+	}
+
 	function focusNode(node: HTMLInputElement) {
 		node.focus();
 	}
@@ -61,14 +68,14 @@
 						bind:value={name}
 						use:focusNode
 						placeholder={repos[0] ? repos[0].label : "e.g. Acme App"}
-						onkeydown={(e) => { if (e.key === "Enter" && repos.length) create(); if (e.key === "Escape") cancel(); }}
+						onkeydown={(e) => { if (e.key === "Enter") { repos.length ? create() : createBlank(); } if (e.key === "Escape") cancel(); }}
 					/>
 				</div>
 
 				<div class="np-field">
 					<span class="np-label">Repos · one session spans them all</span>
 					{#if repos.length === 0}
-						<div class="np-empty">No repos yet. Add the folders this project's session should work across — frontend, backend, cron…</div>
+						<div class="np-empty">No repos yet. Add the folders this project's session should work across — frontend, backend, cron… or leave it empty and <strong>start blank</strong> in a fresh scratch space.</div>
 					{:else}
 						<div class="np-repos">
 							{#each repos as r, i (r.id)}
@@ -93,10 +100,20 @@
 			</div>
 
 			<div class="np-foot">
-				<span class="np-hint">The first repo is Claude's cwd; the others are granted with <code>--add-dir</code>.</span>
+				<span class="np-hint">
+					{#if repos.length === 0}
+						No repos: a blank session in a fresh <code>~/.ai-cockpit/scratch</code> space.
+					{:else}
+						The first repo is Claude's cwd; the others are granted with <code>--add-dir</code>.
+					{/if}
+				</span>
 				<div class="np-actions">
 					<button class="np-ghost" onclick={cancel}>Cancel</button>
-					<button class="np-create" onclick={create} disabled={repos.length === 0}>Create project</button>
+					{#if repos.length === 0}
+						<button class="np-create" onclick={createBlank}>Start blank session</button>
+					{:else}
+						<button class="np-create" onclick={create}>Create project</button>
+					{/if}
 				</div>
 			</div>
 		</div>

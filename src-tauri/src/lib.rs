@@ -21,6 +21,7 @@ pub fn run() {
 			agent::agent_stop,
 			mcp::agent_answer,
 			files::home_dir,
+			files::scratch_dir,
 			files::list_dirs,
 			pty::pty_open,
 			pty::pty_write,

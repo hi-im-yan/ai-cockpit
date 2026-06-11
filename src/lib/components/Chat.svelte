@@ -137,7 +137,7 @@
 				<h2 ondblclick={() => (editingName = true)} title="Double-click to rename">{project.name}</h2>
 			{/if}
 			<div class="st" style="color:{status.color}">
-				<span class="b" class:pulse={project.status === "working"} style="background:{status.color}"></span>{status.label}{#if project.repos?.length} · 📂 {project.repos.length > 1 ? `${project.repos.length} repos` : shortCwd(project.repos[0].path)}{/if}
+				<span class="b" class:pulse={project.status === "working"} style="background:{status.color}"></span>{status.label}{#if project.repos?.length} · 📂 {project.repos.length > 1 ? `${project.repos.length} repos` : shortCwd(project.repos[0].path)}{:else} · ✨ scratch{/if}
 			</div>
 		</div>
 		<span class="sp"></span>
