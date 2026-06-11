@@ -16,6 +16,17 @@ export default defineConfig(async () => ({
     port: 1420,
     strictPort: true,
     host: host || false,
+    // Pre-transform the Svelte components on server start (after SvelteKit's sync), so the
+    // browser's initial burst hits warm, correctly-scoped modules. Without this, the first
+    // load races sync and some components (TopNav, AgentTree) get served with their scoped
+    // CSS dropped — panels render with no background until the file is re-transformed.
+    warmup: {
+      clientFiles: [
+        "./src/routes/+layout.svelte",
+        "./src/routes/+page.svelte",
+        "./src/lib/components/*.svelte",
+      ],
+    },
     hmr: host
       ? {
           protocol: "ws",
